@@ -93,10 +93,8 @@ typedef struct {
     lv_obj_t *left_foot;
     lv_obj_t *right_foot;
     lv_obj_t *status_dot;
-    lv_obj_t *health_bar;
-    lv_obj_t *social_bar;
-    lv_obj_t *health_icon;
-    lv_obj_t *social_icon;
+    lv_obj_t *score_bar;
+    lv_obj_t *score_icon;
     lv_obj_t *score_pips[4];
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
@@ -123,10 +121,10 @@ typedef struct {
     int32_t displayed_character_y;
     int32_t displayed_health;
     int32_t displayed_social;
+    int32_t displayed_score;
     int32_t displayed_nearby_devices;
     int64_t displayed_scene_minute;
     int displayed_scene_weather_kind;
-    uint32_t displayed_steps;
     int64_t celebration_started_ms;
     int64_t celebration_until_ms;
 } buddy_ui_t;
@@ -177,6 +175,11 @@ static float clampf(float value, float minimum, float maximum)
 static int64_t now_ms(void)
 {
     return esp_timer_get_time() / 1000;
+}
+
+static uint8_t overall_activity_score(const pet_state_snapshot_t *needs)
+{
+    return (uint8_t)(((uint16_t)needs->health + (uint16_t)needs->social + 1U) / 2U);
 }
 
 static lv_obj_t *active_screen(void)
@@ -518,28 +521,18 @@ static void create_footer(lv_obj_t *screen)
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
 
-    s_ui.health_icon = make_heart(card, 12, 16, COLOR_MINT);
-    make_shape(s_ui.health_icon, 9, 11, 8, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.health_icon, 6, 8, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.health_icon, 16, 7, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
-    lv_obj_t *health_track = make_shape(card, 47, 21, 157, 16, 0x30385F, 8);
-    s_ui.health_bar = make_shape(health_track, 0, 0, 1, 12, COLOR_MINT, 6);
-    lv_obj_set_height(s_ui.health_bar, 16);
+    s_ui.score_icon = make_heart(card, 12, 16, COLOR_MINT);
+    make_shape(s_ui.score_icon, 9, 11, 8, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.score_icon, 6, 8, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.score_icon, 16, 7, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
+    lv_obj_t *score_track = make_shape(card, 47, 21, 264, 16, 0x30385F, 8);
+    s_ui.score_bar = make_shape(score_track, 0, 0, 1, 16, COLOR_MINT, 8);
 
     for (size_t i = 0; i < 4; ++i) {
-        s_ui.score_pips[i] = make_shape(health_track, 34 + (int32_t)i * 30, 5,
+        s_ui.score_pips[i] = make_shape(score_track, 49 + (int32_t)i * 52, 5,
                                        6, 6, COLOR_CREAM, LV_RADIUS_CIRCLE);
         lv_obj_set_style_opa(s_ui.score_pips[i], LV_OPA_30, LV_PART_MAIN);
     }
-
-    s_ui.social_icon = make_shape(card, 215, 15, 28, 28, COLOR_CHEEK,
-                                  LV_RADIUS_CIRCLE);
-    lv_obj_set_style_bg_opa(s_ui.social_icon, LV_OPA_TRANSP, LV_PART_MAIN);
-    make_shape(s_ui.social_icon, 1, 3, 12, 12, COLOR_CHEEK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.social_icon, 15, 3, 12, 12, COLOR_LILAC, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.social_icon, 7, 15, 14, 11, COLOR_CHEEK, LV_RADIUS_CIRCLE);
-    lv_obj_t *social_track = make_shape(card, 251, 23, 60, 12, 0x30385F, 6);
-    s_ui.social_bar = make_shape(social_track, 0, 0, 1, 12, COLOR_CHEEK, 6);
 }
 
 static motion_state_t motion_snapshot(void)
@@ -704,6 +697,7 @@ static void buddy_update(lv_timer_t *timer)
     const weather_snapshot_t weather = weather_service_snapshot();
     const weather_kind_t weather_kind = classify_weather(&weather);
     const int64_t time_ms = now_ms();
+    const uint8_t score = overall_activity_score(&needs);
 
     if (weather.status == WEATHER_STATUS_UPDATING) {
         if (!s_ui.status_initialized ||
@@ -721,14 +715,9 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.surprised_until_ms = time_ms + 850;
     }
 
-    if (s_ui.displayed_steps == UINT32_MAX) {
-        s_ui.displayed_steps = needs.steps;
-    } else if (needs.steps > s_ui.displayed_steps) {
-        if (s_ui.displayed_health != INT32_MIN && needs.health > s_ui.displayed_health) {
-            s_ui.celebration_started_ms = time_ms;
-            s_ui.celebration_until_ms = time_ms + 900;
-        }
-        s_ui.displayed_steps = needs.steps;
+    if (s_ui.displayed_score != INT32_MIN && score > s_ui.displayed_score) {
+        s_ui.celebration_started_ms = time_ms;
+        s_ui.celebration_until_ms = time_ms + 900;
     }
 
     const bool surprised = time_ms < s_ui.surprised_until_ms;
@@ -755,7 +744,7 @@ static void buddy_update(lv_timer_t *timer)
     const int32_t character_y = 83 + breathe - dance_jump - flip_jump;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
-        (celebrating || needs.walking || needs.health >= 85 ? BUDDY_EXPRESSION_HAPPY :
+        (celebrating || needs.walking || score >= 85 ? BUDDY_EXPRESSION_HAPPY :
          (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
           (needs.health < 25 ? BUDDY_EXPRESSION_TIRED :
            (needs.social < 25 ? BUDDY_EXPRESSION_LONELY : BUDDY_EXPRESSION_IDLE))));
@@ -847,24 +836,17 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_nearby_devices = needs.nearby_devices;
     }
 
-    if (needs.health != s_ui.displayed_health) {
-        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 156 / 100);
-        lv_obj_set_style_opa(s_ui.health_icon,
-                             needs.health < 25 ? LV_OPA_40 : LV_OPA_COVER,
-                             LV_PART_MAIN);
-        s_ui.displayed_health = needs.health;
+    if (score != s_ui.displayed_score) {
+        lv_obj_set_width(s_ui.score_bar, 1 + score * 263 / 100);
+        lv_obj_set_style_opa(s_ui.score_icon,
+                             score < 25 ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
+        s_ui.displayed_score = score;
     }
-    lv_obj_set_style_bg_color(s_ui.health_bar,
+    lv_obj_set_style_bg_color(s_ui.score_bar,
                               lv_color_hex(needs.walking || celebrating ? COLOR_STAR : COLOR_MINT),
                               LV_PART_MAIN);
-
-    if (needs.social != s_ui.displayed_social) {
-        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 59 / 100);
-        lv_obj_set_style_opa(s_ui.social_icon,
-                             needs.social < 25 ? LV_OPA_40 : LV_OPA_COVER,
-                             LV_PART_MAIN);
-        s_ui.displayed_social = needs.social;
-    }
+    s_ui.displayed_health = needs.health;
+    s_ui.displayed_social = needs.social;
 
     if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online ||
         weather.generation != s_ui.displayed_weather_generation) {
@@ -908,12 +890,12 @@ static void create_buddy_ui(void)
     s_ui.displayed_character_y = INT32_MIN;
     s_ui.displayed_health = INT32_MIN;
     s_ui.displayed_social = INT32_MIN;
+    s_ui.displayed_score = INT32_MIN;
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
     s_ui.displayed_scene_minute = INT64_MIN;
     s_ui.displayed_scene_weather_kind = -1;
-    s_ui.displayed_steps = UINT32_MAX;
     lv_timer_create(buddy_update, 66, NULL);
 }
 

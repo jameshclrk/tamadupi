@@ -11,7 +11,7 @@
 #define DEFAULT_SOCIAL 35.0f
 #define NEEDS_UPDATE_PERIOD_MS 60000
 #define NEEDS_SAVE_INTERVAL_TICKS 5
-#define HEALTH_PER_STEP 0.25f
+#define HEALTH_PER_STEP 0.50f
 
 static const char *TAG = "pet_state";
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
