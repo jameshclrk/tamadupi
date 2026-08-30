@@ -51,7 +51,7 @@
 #define COLOR_INK 0x302743
 #define COLOR_STAR 0xFFE07A
 
-static const char *TAG = "motion_buddy";
+static const char *TAG = "tamadupi";
 
 typedef struct {
     bool sensor_online;
@@ -171,7 +171,7 @@ static void make_decorations(lv_obj_t *screen)
 static void create_header(lv_obj_t *screen)
 {
     lv_obj_t *eyebrow = lv_label_create(screen);
-    lv_label_set_text(eyebrow, "MOTION BUDDY");
+    lv_label_set_text(eyebrow, "TAMADUPI");
     lv_obj_set_pos(eyebrow, 24, 22);
     lv_obj_set_style_text_color(eyebrow, lv_color_hex(COLOR_MINT), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(eyebrow, 2, LV_PART_MAIN);
@@ -560,7 +560,7 @@ static void publish_motion(const qmi8658_data_t *data)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Starting motion buddy demo");
+    ESP_LOGI(TAG, "Starting Tamadupi");
 
     lv_display_t *display = bsp_display_start();
     if (display == NULL) {

@@ -1,8 +1,8 @@
-# Motion Buddy Demo
+# Tamadupi
 
 [简体中文](README_ZH.md)
 
-An interactive LVGL character demo for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Mochi reacts to the onboard QMI8658 motion sensor in real time.
+Tamadupi is a sensor-driven virtual character for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Mochi reacts to motion, nearby BLE devices, and the weather outside.
 
 ## Hardware
 
@@ -10,6 +10,14 @@ An interactive LVGL character demo for the Waveshare ESP32-S3-Touch-AMOLED-1.8. 
 - USB data cable
 
 ## Build and Flash
+
+Copy the local configuration template before building:
+
+```bash
+cp main/secrets.example.h main/secrets.h
+```
+
+Edit `main/secrets.h` with the fixed Wi-Fi credentials and location. This file is ignored by Git and its values are compiled directly into the firmware.
 
 ```bash
 idf.py set-target esp32s3
@@ -33,4 +41,4 @@ The status pill reports `IMU live` when the sensor is connected. If it shows `no
 
 ## Tuning
 
-Motion thresholds, sampling rate, and UI colors are grouped near the top of `main/main.c` for quick experimentation.
+Motion thresholds, sampling rate, and UI colors are grouped near the top of `main/main.c` for quick experimentation. Never put real credentials in `secrets.example.h`.

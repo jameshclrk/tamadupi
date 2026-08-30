@@ -4,6 +4,9 @@
 /sdkconfig
 /sdkconfig.old
 
+# Local firmware configuration (Wi-Fi credentials and location)
+/main/secrets.h
+
 # Editor and operating system files
 .DS_Store
 *.swp
