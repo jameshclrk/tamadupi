@@ -24,6 +24,7 @@
 
 #define IMU_PROBE_TIMEOUT_MS 100
 #define IMU_SAMPLE_PERIOD_MS 40
+#define INITIAL_WEATHER_WAIT_MS 15000
 #define QMI8658_RESET_REGISTER 0x60
 #define QMI8658_RESET_COMMAND 0xB0
 #define QMI8658_CTRL1_VALUE 0x60
@@ -568,6 +569,19 @@ static void buddy_update(lv_timer_t *timer)
     const weather_kind_t weather_kind = classify_weather(&weather);
     const int64_t time_ms = now_ms();
 
+    if (weather.status == WEATHER_STATUS_UPDATING) {
+        if (!s_ui.status_initialized ||
+            weather.generation != s_ui.displayed_weather_generation) {
+            lv_obj_set_style_bg_color(s_ui.status_dot, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
+            lv_label_set_text(s_ui.status_label, "weather...");
+            s_ui.displayed_sensor_online = motion.sensor_online;
+            s_ui.displayed_weather_generation = weather.generation;
+            s_ui.status_initialized = true;
+        }
+        return;
+    }
+
     if (motion.shake_generation != s_ui.seen_shake_generation) {
         s_ui.seen_shake_generation = motion.shake_generation;
         s_ui.surprised_until_ms = time_ms + 850;
@@ -693,8 +707,11 @@ static void buddy_update(lv_timer_t *timer)
             color = weather_kind == WEATHER_KIND_CLEAR ? COLOR_STAR :
                     (weather_kind == WEATHER_KIND_RAIN || weather_kind == WEATHER_KIND_STORM ?
                      COLOR_RAIN : COLOR_MINT);
-            lv_snprintf(status, sizeof(status), "%.0fC %s",
-                        (double)weather.temperature_c, weather_name(weather_kind));
+            const int temperature_c = (int)(weather.temperature_c >= 0.0f ?
+                                             weather.temperature_c + 0.5f :
+                                             weather.temperature_c - 0.5f);
+            lv_snprintf(status, sizeof(status), "%dC %s",
+                        temperature_c, weather_name(weather_kind));
         }
         lv_obj_set_style_bg_color(s_ui.status_dot, lv_color_hex(color), LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(color), LV_PART_MAIN);
@@ -846,13 +863,26 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_ERROR_CHECK(pet_state_init());
-    ret = social_scan_start();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "BLE social sensing failed: %s", esp_err_to_name(ret));
-    }
     ret = weather_service_start();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Weather service failed: %s", esp_err_to_name(ret));
+    }
+
+    // Let the first Wi-Fi handshake and TLS request use the internal heap
+    // before the display and BLE stacks reserve their long-lived buffers.
+    for (int elapsed_ms = 0; elapsed_ms < INITIAL_WEATHER_WAIT_MS;
+         elapsed_ms += 100) {
+        const weather_status_t status = weather_service_snapshot().status;
+        if (status == WEATHER_STATUS_READY || status == WEATHER_STATUS_ERROR ||
+            status == WEATHER_STATUS_NEEDS_CONFIG) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    ret = social_scan_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE social sensing failed: %s", esp_err_to_name(ret));
     }
 
     lv_display_t *display = bsp_display_start();

@@ -145,10 +145,13 @@ static esp_err_t fetch_weather(void)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    publish_weather((float)temperature->valuedouble, code->valueint, day->valueint != 0);
+    const float temperature_c = (float)temperature->valuedouble;
+    const int weather_code = code->valueint;
+    const bool is_day = day->valueint != 0;
     ESP_LOGI(TAG, "Weather updated: %.1f C, code %d",
              temperature->valuedouble, code->valueint);
     cJSON_Delete(root);
+    publish_weather(temperature_c, weather_code, is_day);
     return ESP_OK;
 }
 
@@ -159,6 +162,9 @@ static void weather_task(void *arg)
         xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED_BIT,
                             pdFALSE, pdTRUE, portMAX_DELAY);
         set_weather_status(WEATHER_STATUS_UPDATING);
+        // Give LVGL time to draw the status once, then stay idle while TLS uses
+        // the shared internal DMA heap.
+        vTaskDelay(pdMS_TO_TICKS(750));
         const esp_err_t ret = fetch_weather();
         if (ret != ESP_OK) {
             set_weather_status(WEATHER_STATUS_ERROR);
