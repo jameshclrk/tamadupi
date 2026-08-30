@@ -65,6 +65,10 @@
 #define COLOR_SNOW 0xE8F5FF
 #define COLOR_CREAM 0xFFF3D6
 #define COLOR_LILAC 0xC9B8FF
+#define COLOR_DAY_SKY 0x65BCE9
+#define COLOR_DAY_HORIZON 0xC7EEF0
+#define COLOR_DAY_HILL 0x72B77D
+#define COLOR_DAY_GRASS 0x4F9D57
 
 static const char *TAG = "tamadupi";
 
@@ -101,9 +105,17 @@ typedef struct {
     lv_obj_t *health_icon;
     lv_obj_t *social_icon;
     lv_obj_t *footprints[4];
-    lv_obj_t *weather_sun;
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
+    lv_obj_t *scene_horizon;
+    lv_obj_t *scene_hills[2];
+    lv_obj_t *scene_grass;
+    lv_obj_t *scene_sun_glow;
+    lv_obj_t *scene_sun;
+    lv_obj_t *scene_moon;
+    lv_obj_t *scene_moon_cutout;
+    lv_obj_t *scene_stars[9];
+    lv_obj_t *scene_fireflies[5];
     lv_obj_t *sparkles[4];
     uint32_t seen_shake_generation;
     int64_t surprised_until_ms;
@@ -121,6 +133,8 @@ typedef struct {
     int32_t displayed_nearby_devices;
     int32_t displayed_compression;
     int displayed_deform_expression;
+    int64_t displayed_scene_minute;
+    int displayed_scene_weather_kind;
     float physics_x;
     float physics_velocity;
     float squish;
@@ -144,6 +158,16 @@ typedef enum {
     WEATHER_KIND_SNOW,
     WEATHER_KIND_STORM,
 } weather_kind_t;
+
+typedef struct {
+    uint32_t sky;
+    uint32_t horizon;
+    uint32_t hill;
+    uint32_t grass;
+    float stars;
+    float fireflies;
+    float daylight;
+} scene_palette_t;
 
 static portMUX_TYPE s_motion_lock = portMUX_INITIALIZER_UNLOCKED;
 static motion_state_t s_motion = {0};
@@ -211,14 +235,161 @@ static lv_obj_t *make_heart(lv_obj_t *parent, int32_t x, int32_t y,
     return heart;
 }
 
+static uint32_t blend_color(uint32_t from, uint32_t to, float amount)
+{
+    amount = clampf(amount, 0.0f, 1.0f);
+    const uint32_t from_r = (from >> 16) & 0xff;
+    const uint32_t from_g = (from >> 8) & 0xff;
+    const uint32_t from_b = from & 0xff;
+    const uint32_t to_r = (to >> 16) & 0xff;
+    const uint32_t to_g = (to >> 8) & 0xff;
+    const uint32_t to_b = to & 0xff;
+    const uint32_t r = (uint32_t)((float)from_r + ((float)to_r - (float)from_r) * amount);
+    const uint32_t g = (uint32_t)((float)from_g + ((float)to_g - (float)from_g) * amount);
+    const uint32_t b = (uint32_t)((float)from_b + ((float)to_b - (float)from_b) * amount);
+    return (r << 16) | (g << 8) | b;
+}
+
+static scene_palette_t blend_palette(scene_palette_t from, scene_palette_t to,
+                                     float amount)
+{
+    return (scene_palette_t) {
+        .sky = blend_color(from.sky, to.sky, amount),
+        .horizon = blend_color(from.horizon, to.horizon, amount),
+        .hill = blend_color(from.hill, to.hill, amount),
+        .grass = blend_color(from.grass, to.grass, amount),
+        .stars = from.stars + (to.stars - from.stars) * amount,
+        .fireflies = from.fireflies + (to.fireflies - from.fireflies) * amount,
+        .daylight = from.daylight + (to.daylight - from.daylight) * amount,
+    };
+}
+
+static scene_palette_t scene_palette_for(const weather_snapshot_t *weather,
+                                         int64_t time_ms, int64_t *current_unix)
+{
+    static const scene_palette_t night = {
+        0x111936, 0x26345C, 0x294A55, 0x21492F, 1.0f, 0.85f, 0.0f,
+    };
+    static const scene_palette_t dawn = {
+        0x8C729F, 0xFFB184, 0x71827A, 0x3E7146, 0.25f, 0.25f, 0.45f,
+    };
+    static const scene_palette_t day = {
+        COLOR_DAY_SKY, COLOR_DAY_HORIZON, COLOR_DAY_HILL, COLOR_DAY_GRASS,
+        0.0f, 0.0f, 1.0f,
+    };
+    static const scene_palette_t sunset = {
+        0x785D98, 0xFF8B63, 0x77735F, 0x456B3E, 0.15f, 0.45f, 0.42f,
+    };
+
+    const bool solar_time_ready = weather->status == WEATHER_STATUS_READY &&
+                                  weather->current_time_unix > 0 &&
+                                  weather->sunrise_unix > 0 &&
+                                  weather->sunset_unix > weather->sunrise_unix;
+    if (!solar_time_ready) {
+        *current_unix = 0;
+        return weather->is_day ? day : night;
+    }
+
+    const int64_t elapsed_seconds = (time_ms - weather->observed_at_ms) / 1000;
+    const int64_t current = weather->current_time_unix + elapsed_seconds;
+    const int64_t sunrise = weather->sunrise_unix;
+    const int64_t sunset_time = weather->sunset_unix;
+    *current_unix = current;
+
+    if (current < sunrise - 3600 || current >= sunset_time + 2700) {
+        return night;
+    }
+    if (current < sunrise) {
+        return blend_palette(night, dawn,
+                             (float)(current - (sunrise - 3600)) / 3600.0f);
+    }
+    if (current < sunrise + 2700) {
+        return blend_palette(dawn, day, (float)(current - sunrise) / 2700.0f);
+    }
+    if (current < sunset_time - 3600) {
+        return day;
+    }
+    if (current < sunset_time) {
+        return blend_palette(day, sunset,
+                             (float)(current - (sunset_time - 3600)) / 3600.0f);
+    }
+    return blend_palette(sunset, night,
+                         (float)(current - sunset_time) / 2700.0f);
+}
+
+static void create_time_scene(lv_obj_t *screen)
+{
+    s_ui.scene_horizon = make_shape(screen, -35, 124, 438, 240,
+                                    COLOR_DAY_HORIZON, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(s_ui.scene_horizon, LV_OPA_50, LV_PART_MAIN);
+
+    s_ui.scene_sun_glow = make_shape(screen, 270, 26, 78, 78,
+                                     COLOR_STAR, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(s_ui.scene_sun_glow, LV_OPA_30, LV_PART_MAIN);
+    s_ui.scene_sun = make_shape(screen, 283, 39, 52, 52,
+                                COLOR_STAR, LV_RADIUS_CIRCLE);
+
+    const int16_t star_positions[9][2] = {
+        {27, 55}, {83, 27}, {145, 62}, {211, 28}, {330, 104},
+        {52, 154}, {184, 129}, {282, 153}, {344, 211},
+    };
+    for (size_t i = 0; i < 9; ++i) {
+        const int32_t size = (i % 3) == 0 ? 6 : 4;
+        s_ui.scene_stars[i] = make_shape(screen, star_positions[i][0],
+                                         star_positions[i][1], size, size,
+                                         COLOR_CREAM, LV_RADIUS_CIRCLE);
+    }
+
+    s_ui.scene_moon = make_shape(screen, 286, 35, 49, 49,
+                                 COLOR_CREAM, LV_RADIUS_CIRCLE);
+    s_ui.scene_moon_cutout = make_shape(s_ui.scene_moon, 14, -4, 42, 42,
+                                        COLOR_BG, LV_RADIUS_CIRCLE);
+
+    s_ui.scene_hills[0] = make_shape(screen, -68, 240, 270, 132,
+                                     COLOR_DAY_HILL, LV_RADIUS_CIRCLE);
+    s_ui.scene_hills[1] = make_shape(screen, 144, 236, 294, 144,
+                                     COLOR_DAY_HILL, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(s_ui.scene_hills[1], LV_OPA_80, LV_PART_MAIN);
+    s_ui.scene_grass = make_shape(screen, 0, 286, 368, 94,
+                                  COLOR_DAY_GRASS, 38);
+
+    const int16_t tuft_x[14] = {8, 31, 57, 82, 112, 137, 166,
+                                 196, 225, 251, 278, 302, 328, 351};
+    for (size_t i = 0; i < 14; ++i) {
+        lv_obj_t *blade = make_shape(s_ui.scene_grass, tuft_x[i],
+                                     2 + (int32_t)(i % 3) * 4,
+                                     5, 18 - (int32_t)(i % 3) * 3,
+                                     0x8DD16F, 3);
+        lv_obj_set_style_transform_rotation(blade, (i % 2) == 0 ? -120 : 120,
+                                            LV_PART_MAIN);
+    }
+
+    const int16_t flower_positions[4][2] = {{24, 30}, {70, 49}, {294, 43}, {337, 23}};
+    const uint32_t flower_colors[4] = {COLOR_CREAM, COLOR_CHEEK, COLOR_LILAC, COLOR_STAR};
+    for (size_t i = 0; i < 4; ++i) {
+        lv_obj_t *flower = make_shape(s_ui.scene_grass,
+                                      flower_positions[i][0], flower_positions[i][1],
+                                      18, 18, flower_colors[i], LV_RADIUS_CIRCLE);
+        lv_obj_set_style_bg_opa(flower, LV_OPA_TRANSP, LV_PART_MAIN);
+        make_shape(flower, 0, 5, 8, 8, flower_colors[i], LV_RADIUS_CIRCLE);
+        make_shape(flower, 10, 5, 8, 8, flower_colors[i], LV_RADIUS_CIRCLE);
+        make_shape(flower, 5, 0, 8, 8, flower_colors[i], LV_RADIUS_CIRCLE);
+        make_shape(flower, 5, 10, 8, 8, flower_colors[i], LV_RADIUS_CIRCLE);
+        make_shape(flower, 6, 6, 6, 6, COLOR_STAR, LV_RADIUS_CIRCLE);
+    }
+
+    const int16_t firefly_positions[5][2] = {
+        {43, 250}, {102, 274}, {241, 260}, {310, 282}, {344, 238},
+    };
+    for (size_t i = 0; i < 5; ++i) {
+        s_ui.scene_fireflies[i] = make_shape(screen, firefly_positions[i][0],
+                                             firefly_positions[i][1], 7, 7,
+                                             COLOR_STAR, LV_RADIUS_CIRCLE);
+    }
+}
+
 static void make_decorations(lv_obj_t *screen)
 {
-    lv_obj_t *orb = make_shape(screen, -54, 78, 142, 142, 0x252956, LV_RADIUS_CIRCLE);
-    lv_obj_set_style_bg_opa(orb, LV_OPA_40, LV_PART_MAIN);
-
-    orb = make_shape(screen, 304, 222, 108, 108, 0x35294F, LV_RADIUS_CIRCLE);
-    lv_obj_set_style_bg_opa(orb, LV_OPA_50, LV_PART_MAIN);
-
     const int16_t positions[4][2] = {{42, 124}, {306, 148}, {43, 282}, {305, 291}};
 
     for (size_t i = 0; i < 4; ++i) {
@@ -231,9 +402,6 @@ static void make_decorations(lv_obj_t *screen)
 
 static void create_weather_ambience(lv_obj_t *screen)
 {
-    s_ui.weather_sun = make_shape(screen, 286, 24, 48, 48, COLOR_STAR, LV_RADIUS_CIRCLE);
-    lv_obj_add_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
-
     s_ui.weather_clouds[0] = make_shape(screen, 250, 44, 88, 29,
                                         COLOR_CLOUD, LV_RADIUS_CIRCLE);
     s_ui.weather_clouds[1] = make_shape(screen, 266, 31, 39, 37,
@@ -410,19 +578,84 @@ static void set_eye_expression(bool blink, buddy_expression_t expression, int32_
     lv_obj_set_x(s_ui.right_pupil, 12 + gaze_x);
 }
 
+static void update_time_scene(const weather_snapshot_t *weather,
+                              weather_kind_t weather_kind, int64_t time_ms)
+{
+    int64_t current_unix = 0;
+    const scene_palette_t palette = scene_palette_for(weather, time_ms, &current_unix);
+    const int64_t scene_minute = current_unix > 0 ? current_unix / 60 : time_ms / 60000;
+
+    if (scene_minute != s_ui.displayed_scene_minute ||
+        weather_kind != s_ui.displayed_scene_weather_kind) {
+        lv_obj_set_style_bg_color(active_screen(), lv_color_hex(palette.sky), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_ui.scene_horizon, lv_color_hex(palette.horizon),
+                                  LV_PART_MAIN);
+        for (size_t i = 0; i < 2; ++i) {
+            lv_obj_set_style_bg_color(s_ui.scene_hills[i], lv_color_hex(palette.hill),
+                                      LV_PART_MAIN);
+        }
+        lv_obj_set_style_bg_color(s_ui.scene_grass, lv_color_hex(palette.grass),
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_ui.scene_moon_cutout, lv_color_hex(palette.sky),
+                                  LV_PART_MAIN);
+
+        const bool solar_time_ready = current_unix > 0 &&
+                                      weather->sunset_unix > weather->sunrise_unix;
+        bool sun_up = weather->is_day;
+        float sun_progress = 0.55f;
+        if (solar_time_ready) {
+            sun_up = current_unix >= weather->sunrise_unix - 900 &&
+                     current_unix <= weather->sunset_unix + 900;
+            sun_progress = clampf((float)(current_unix - weather->sunrise_unix) /
+                                  (float)(weather->sunset_unix - weather->sunrise_unix),
+                                  0.0f, 1.0f);
+        }
+        const int32_t sun_x = 8 + (int32_t)(sun_progress * 300.0f);
+        const int32_t sun_y = 72 - (int32_t)(sinf(sun_progress * BUDDY_PI) * 62.0f);
+        lv_obj_set_pos(s_ui.scene_sun_glow, sun_x - 13, sun_y - 13);
+        lv_obj_set_pos(s_ui.scene_sun, sun_x, sun_y);
+
+        float weather_dimming = 1.0f;
+        if (weather_kind == WEATHER_KIND_CLOUDY) {
+            weather_dimming = 0.55f;
+        } else if (weather_kind == WEATHER_KIND_RAIN || weather_kind == WEATHER_KIND_SNOW) {
+            weather_dimming = 0.30f;
+        } else if (weather_kind == WEATHER_KIND_STORM) {
+            weather_dimming = 0.12f;
+        }
+        const lv_opa_t sun_opa = sun_up ?
+            (lv_opa_t)(255.0f * palette.daylight * weather_dimming) : LV_OPA_TRANSP;
+        lv_obj_set_style_opa(s_ui.scene_sun, sun_opa, LV_PART_MAIN);
+        lv_obj_set_style_opa(s_ui.scene_sun_glow, sun_opa / 3, LV_PART_MAIN);
+
+        const lv_opa_t moon_opa = sun_up ? LV_OPA_TRANSP :
+                                  (lv_opa_t)(255.0f * (1.0f - palette.daylight));
+        lv_obj_set_style_opa(s_ui.scene_moon, moon_opa, LV_PART_MAIN);
+        for (size_t i = 0; i < 9; ++i) {
+            const float varied = palette.stars * (0.58f + (float)(i % 3) * 0.18f);
+            lv_obj_set_style_opa(s_ui.scene_stars[i], (lv_opa_t)(255.0f * varied),
+                                 LV_PART_MAIN);
+        }
+        s_ui.displayed_scene_minute = scene_minute;
+        s_ui.displayed_scene_weather_kind = weather_kind;
+    }
+
+    for (size_t i = 0; i < 5; ++i) {
+        const float pulse = 0.48f + 0.52f *
+                            sinf((float)time_ms * 0.003f + (float)i * 1.7f);
+        const float opacity = clampf(palette.fireflies * pulse, 0.0f, 1.0f);
+        lv_obj_set_style_opa(s_ui.scene_fireflies[i], (lv_opa_t)(255.0f * opacity),
+                             LV_PART_MAIN);
+    }
+}
+
 static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
 {
-    const bool show_sun = kind == WEATHER_KIND_CLEAR;
     const bool show_cloud = kind == WEATHER_KIND_CLOUDY || kind == WEATHER_KIND_RAIN ||
                             kind == WEATHER_KIND_SNOW || kind == WEATHER_KIND_STORM;
     const bool show_particles = kind == WEATHER_KIND_RAIN || kind == WEATHER_KIND_SNOW ||
                                 kind == WEATHER_KIND_STORM;
 
-    if (show_sun) {
-        lv_obj_clear_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
-    }
     for (size_t i = 0; i < 3; ++i) {
         if (show_cloud) {
             lv_obj_clear_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
@@ -599,6 +832,7 @@ static void buddy_update(lv_timer_t *timer)
                                needs.nearby_devices != s_ui.displayed_nearby_devices;
     const bool weather_changed = weather_kind != s_ui.displayed_weather_kind;
 
+    update_time_scene(&weather, weather_kind, time_ms);
     update_weather_ambience(weather_kind, time_ms);
 
     if (character_x != s_ui.displayed_character_x || character_y != s_ui.displayed_character_y) {
@@ -719,6 +953,7 @@ static void create_buddy_ui(void)
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
+    create_time_scene(screen);
     make_decorations(screen);
     create_weather_ambience(screen);
     create_header(screen);
@@ -735,6 +970,8 @@ static void create_buddy_ui(void)
     s_ui.displayed_weather_kind = -1;
     s_ui.displayed_compression = INT32_MIN;
     s_ui.displayed_deform_expression = -1;
+    s_ui.displayed_scene_minute = INT64_MIN;
+    s_ui.displayed_scene_weather_kind = -1;
     lv_timer_create(buddy_update, 66, NULL);
 }
 
