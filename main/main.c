@@ -7,6 +7,7 @@
 #include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,7 +45,11 @@
 #define BUDDY_BODY_X 30
 #define BUDDY_BODY_Y 50
 #define BUDDY_BODY_WIDTH 170
-#define BUDDY_BODY_HEIGHT 170
+#define BUDDY_BODY_HEIGHT 165
+#define KITTY_EAR_Y 18
+#define KITTY_PAW_Y 151
+#define KITTY_FOOT_Y 190
+#define KITTY_TAIL_Y 115
 
 #define COLOR_BG 0x10142D
 #define COLOR_PANEL 0x1B2142
@@ -91,6 +96,7 @@ typedef struct {
     lv_obj_t *right_cheek;
     lv_obj_t *left_ear;
     lv_obj_t *right_ear;
+    lv_obj_t *tail;
     lv_obj_t *left_arm;
     lv_obj_t *right_arm;
     lv_obj_t *left_foot;
@@ -141,6 +147,12 @@ typedef struct {
     int64_t celebration_until_ms;
 } buddy_ui_t;
 
+typedef struct {
+    uint32_t primary;
+    uint32_t light;
+    uint32_t dark;
+} kitty_palette_t;
+
 typedef enum {
     BUDDY_EXPRESSION_IDLE,
     BUDDY_EXPRESSION_TILT,
@@ -172,6 +184,7 @@ typedef struct {
 static portMUX_TYPE s_motion_lock = portMUX_INITIALIZER_UNLOCKED;
 static motion_state_t s_motion = {0};
 static buddy_ui_t s_ui = {0};
+static kitty_palette_t s_kitty_palette = {COLOR_PEACH, COLOR_PEACH_LIGHT, COLOR_PEACH_DARK};
 
 static float clampf(float value, float minimum, float maximum)
 {
@@ -264,6 +277,32 @@ static uint32_t blend_color(uint32_t from, uint32_t to, float amount)
     const uint32_t g = (uint32_t)((float)from_g + ((float)to_g - (float)from_g) * amount);
     const uint32_t b = (uint32_t)((float)from_b + ((float)to_b - (float)from_b) * amount);
     return (r << 16) | (g << 8) | b;
+}
+
+static void select_kitty_palette(void)
+{
+    static const kitty_palette_t palettes[] = {
+        {0xF3B56B, 0xFFE0A8, 0xC87943},
+        {0xAAA2C8, 0xEAE7F5, 0x70688F},
+        {0xD9C0A6, 0xFFF0DE, 0x9A7359},
+        {0x8799AE, 0xD8E1EB, 0x586B81},
+        {0xCC93AA, 0xF3D4E1, 0x925F77},
+        {0x82AA93, 0xD2EBDD, 0x507A63},
+    };
+    uint8_t address[6] = {0};
+    if (esp_read_mac(address, ESP_MAC_BT) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not read Bluetooth address; using default kitty colour");
+        return;
+    }
+
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < sizeof(address); ++i) {
+        hash = (hash ^ address[i]) * 16777619u;
+    }
+    const size_t palette_index = hash % (sizeof(palettes) / sizeof(palettes[0]));
+    s_kitty_palette = palettes[palette_index];
+    ESP_LOGI(TAG, "Kitty colour %u selected from Bluetooth address ...:%02X:%02X:%02X",
+             (unsigned)palette_index, address[3], address[4], address[5]);
 }
 
 static scene_palette_t blend_palette(scene_palette_t from, scene_palette_t to,
@@ -478,62 +517,76 @@ static void create_character(lv_obj_t *screen)
     lv_obj_set_style_border_width(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.character, LV_OBJ_FLAG_SCROLLABLE);
-    make_shape(s_ui.character, 184, 132, 35, 35, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
-    s_ui.left_ear = make_shape(s_ui.character, 42, 15, 66, 82,
-                               COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    s_ui.right_ear = make_shape(s_ui.character, 122, 15, 66, 82,
-                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.left_ear, 15, 15, 36, 53, COLOR_CHEEK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.right_ear, 15, 15, 36, 53, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+
+    s_ui.tail = make_shape(s_ui.character, 174, KITTY_TAIL_Y, 42, 85,
+                           s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.tail, 8, 6, 26, 34, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+
+    s_ui.left_ear = make_shape(s_ui.character, 43, KITTY_EAR_Y, 52, 70,
+                               s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    s_ui.right_ear = make_shape(s_ui.character, 135, KITTY_EAR_Y, 52, 70,
+                                s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_ear, 13, 11, 26, 42, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_ear, 13, 11, 26, 42, COLOR_CHEEK, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(lv_obj_get_child(s_ui.left_ear, 0), LV_OPA_50, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_obj_get_child(s_ui.right_ear, 0), LV_OPA_50, LV_PART_MAIN);
 
-    s_ui.left_arm = make_shape(s_ui.character, 13, 131, 61, 34,
-                               COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    s_ui.right_arm = make_shape(s_ui.character, 156, 131, 61, 34,
-                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    s_ui.left_foot = make_shape(s_ui.character, 43, 193, 59, 34,
-                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    s_ui.right_foot = make_shape(s_ui.character, 128, 193, 59, 34,
-                                 COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.left_foot, 13, 6, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.left_foot, 31, 5, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.right_foot, 13, 5, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.right_foot, 31, 6, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    s_ui.left_arm = make_shape(s_ui.character, 45, KITTY_PAW_Y, 53, 37,
+                               s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    s_ui.right_arm = make_shape(s_ui.character, 132, KITTY_PAW_Y, 53, 37,
+                                s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    s_ui.left_foot = make_shape(s_ui.character, 50, KITTY_FOOT_Y, 58, 34,
+                                s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    s_ui.right_foot = make_shape(s_ui.character, 122, KITTY_FOOT_Y, 58, 34,
+                                 s_kitty_palette.dark, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_foot, 13, 6, 10, 10, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_foot, 30, 5, 10, 10, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_foot, 13, 5, 10, 10, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_foot, 30, 6, 10, 10, s_kitty_palette.light, LV_RADIUS_CIRCLE);
 
     s_ui.body = make_shape(s_ui.character, BUDDY_BODY_X, BUDDY_BODY_Y,
-                           BUDDY_BODY_WIDTH, BUDDY_BODY_HEIGHT, COLOR_PEACH, 82);
+                           BUDDY_BODY_WIDTH, BUDDY_BODY_HEIGHT,
+                           s_kitty_palette.primary, 72);
     lv_obj_set_style_border_width(s_ui.body, 3, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_ui.body, lv_color_hex(COLOR_CREAM), LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.body, lv_color_hex(s_kitty_palette.light),
+                                  LV_PART_MAIN);
 
-    s_ui.belly_glow = make_shape(s_ui.body, 53, 137, 64, 28,
-                                 COLOR_CREAM, LV_RADIUS_CIRCLE);
+    s_ui.belly_glow = make_shape(s_ui.body, 55, 135, 60, 24,
+                                 s_kitty_palette.light, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.belly_glow, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_t *belly_heart = make_heart(s_ui.belly_glow, 19, 2, COLOR_CHEEK);
+    lv_obj_t *belly_heart = make_heart(s_ui.belly_glow, 17, 0, COLOR_CHEEK);
     lv_obj_set_style_opa(belly_heart, LV_OPA_70, LV_PART_MAIN);
 
-    s_ui.left_brow = make_shape(s_ui.body, 35, 51, 29, 5, COLOR_PEACH_DARK, 3);
-    s_ui.right_brow = make_shape(s_ui.body, 106, 51, 29, 5, COLOR_PEACH_DARK, 3);
-    s_ui.left_eye = make_shape(s_ui.body, 29, 60, 42, 45,
+    s_ui.left_brow = make_shape(s_ui.body, 42, 48, 20, 4,
+                                s_kitty_palette.dark, 2);
+    s_ui.right_brow = make_shape(s_ui.body, 108, 48, 20, 4,
+                                 s_kitty_palette.dark, 2);
+    s_ui.left_eye = make_shape(s_ui.body, 36, 58, 34, 36,
                                COLOR_CREAM, LV_RADIUS_CIRCLE);
-    s_ui.right_eye = make_shape(s_ui.body, 99, 60, 42, 45,
+    s_ui.right_eye = make_shape(s_ui.body, 100, 58, 34, 36,
                                 COLOR_CREAM, LV_RADIUS_CIRCLE);
-    s_ui.left_pupil = make_shape(s_ui.left_eye, 12, 11, 18, 23,
+    s_ui.left_pupil = make_shape(s_ui.left_eye, 11, 8, 12, 20,
                                  COLOR_INK, LV_RADIUS_CIRCLE);
-    s_ui.right_pupil = make_shape(s_ui.right_eye, 12, 11, 18, 23,
+    s_ui.right_pupil = make_shape(s_ui.right_eye, 11, 8, 12, 20,
                                   COLOR_INK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.left_pupil, 4, 4, 6, 8, COLOR_TEXT, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.right_pupil, 4, 4, 6, 8, COLOR_TEXT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_pupil, 3, 3, 4, 6, COLOR_TEXT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_pupil, 3, 3, 4, 6, COLOR_TEXT, LV_RADIUS_CIRCLE);
 
-    s_ui.left_cheek = make_shape(s_ui.body, 13, 111, 37, 17,
+    s_ui.left_cheek = make_shape(s_ui.body, 18, 103, 25, 12,
                                  COLOR_CHEEK, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.left_cheek, LV_OPA_70, LV_PART_MAIN);
-    s_ui.right_cheek = make_shape(s_ui.body, 120, 111, 37, 17,
+    s_ui.right_cheek = make_shape(s_ui.body, 127, 103, 25, 12,
                                   COLOR_CHEEK, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.right_cheek, LV_OPA_70, LV_PART_MAIN);
 
-    s_ui.mouth = make_shape(s_ui.body, 70, 111, 30, 18, COLOR_INK, 9);
-    make_shape(s_ui.mouth, 7, 7, 16, 9, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.body, 56, 96, 34, 28, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.body, 80, 96, 34, 28, s_kitty_palette.light, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.body, 79, 98, 12, 9, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.body, 4, 106, 31, 3, s_kitty_palette.dark, 2);
+    make_shape(s_ui.body, 5, 115, 29, 3, s_kitty_palette.dark, 2);
+    make_shape(s_ui.body, 135, 106, 31, 3, s_kitty_palette.dark, 2);
+    make_shape(s_ui.body, 136, 115, 29, 3, s_kitty_palette.dark, 2);
+    s_ui.mouth = make_shape(s_ui.body, 77, 112, 16, 7, COLOR_INK, 4);
 }
 
 static void create_footer(lv_obj_t *screen)
@@ -585,21 +638,21 @@ static void set_eye_expression(bool blink, buddy_expression_t expression, int32_
     const bool surprised = expression == BUDDY_EXPRESSION_SURPRISED;
     const bool happy = expression == BUDDY_EXPRESSION_HAPPY;
     const bool tired = expression == BUDDY_EXPRESSION_TIRED;
-    const int32_t eye_height = surprised ? 49 : (blink ? 5 : (happy ? 18 : (tired ? 23 : 45)));
-    const int32_t eye_y = surprised ? 56 : (blink ? 80 : (happy ? 72 : (tired ? 70 : 60)));
+    const int32_t eye_height = surprised ? 38 : (blink ? 4 : (happy ? 13 : (tired ? 17 : 36)));
+    const int32_t eye_y = surprised ? 56 : (blink ? 74 : (happy ? 69 : (tired ? 67 : 58)));
 
     lv_obj_set_y(s_ui.left_eye, eye_y);
     lv_obj_set_y(s_ui.right_eye, eye_y);
     lv_obj_set_height(s_ui.left_eye, eye_height);
     lv_obj_set_height(s_ui.right_eye, eye_height);
-    lv_obj_set_y(s_ui.left_brow, surprised ? 43 : (happy ? 49 : (tired ? 62 : 51)));
-    lv_obj_set_y(s_ui.right_brow, surprised ? 43 : (happy ? 49 : (tired ? 62 : 51)));
+    lv_obj_set_y(s_ui.left_brow, surprised ? 42 : (happy ? 48 : (tired ? 57 : 48)));
+    lv_obj_set_y(s_ui.right_brow, surprised ? 42 : (happy ? 48 : (tired ? 57 : 48)));
 
     const lv_opa_t pupil_opa = blink || happy ? LV_OPA_TRANSP : LV_OPA_COVER;
     lv_obj_set_style_opa(s_ui.left_pupil, pupil_opa, LV_PART_MAIN);
     lv_obj_set_style_opa(s_ui.right_pupil, pupil_opa, LV_PART_MAIN);
-    lv_obj_set_x(s_ui.left_pupil, 12 + gaze_x);
-    lv_obj_set_x(s_ui.right_pupil, 12 + gaze_x);
+    lv_obj_set_x(s_ui.left_pupil, 11 + gaze_x);
+    lv_obj_set_x(s_ui.right_pupil, 11 + gaze_x);
 }
 
 static void update_time_scene(const weather_snapshot_t *weather,
@@ -723,15 +776,16 @@ static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
 static uint32_t buddy_body_color(buddy_expression_t expression, weather_kind_t weather)
 {
     if (expression == BUDDY_EXPRESSION_TIRED) {
-        return 0xD89A78;
+        return blend_color(s_kitty_palette.primary, COLOR_MUTED, 0.28f);
     }
     if (weather == WEATHER_KIND_RAIN || weather == WEATHER_KIND_STORM) {
-        return 0xE9A27E;
+        return blend_color(s_kitty_palette.primary, COLOR_RAIN, 0.16f);
     }
     if (weather == WEATHER_KIND_SNOW) {
-        return COLOR_PEACH_LIGHT;
+        return s_kitty_palette.light;
     }
-    return expression == BUDDY_EXPRESSION_SURPRISED ? COLOR_PEACH_LIGHT : COLOR_PEACH;
+    return expression == BUDDY_EXPRESSION_SURPRISED ?
+           s_kitty_palette.light : s_kitty_palette.primary;
 }
 
 static void buddy_update(lv_timer_t *timer)
@@ -804,7 +858,7 @@ static void buddy_update(lv_timer_t *timer)
 
     update_time_scene(&weather, weather_kind, time_ms);
     update_weather_ambience(weather_kind, time_ms);
-    lv_obj_set_y(s_ui.belly_glow, 137 + breathe);
+    lv_obj_set_y(s_ui.belly_glow, 135 + breathe);
 
     if (character_x != s_ui.displayed_character_x || character_y != s_ui.displayed_character_y) {
         lv_obj_set_pos(s_ui.character, character_x, character_y);
@@ -814,12 +868,13 @@ static void buddy_update(lv_timer_t *timer)
 
     const int32_t appendage_bob = celebrating ? (int32_t)(celebration_wave * 12.0f) :
                                   (needs.walking ? (int32_t)(dance_wave * 8.0f) : 0);
-    lv_obj_set_y(s_ui.left_ear, 15 - appendage_bob / 2);
-    lv_obj_set_y(s_ui.right_ear, 15 + appendage_bob / 2);
-    lv_obj_set_y(s_ui.left_arm, 131 + appendage_bob);
-    lv_obj_set_y(s_ui.right_arm, 131 - appendage_bob);
-    lv_obj_set_y(s_ui.left_foot, 193 - appendage_bob);
-    lv_obj_set_y(s_ui.right_foot, 193 + appendage_bob);
+    lv_obj_set_y(s_ui.left_ear, KITTY_EAR_Y - appendage_bob / 2);
+    lv_obj_set_y(s_ui.right_ear, KITTY_EAR_Y + appendage_bob / 2);
+    lv_obj_set_y(s_ui.tail, KITTY_TAIL_Y - appendage_bob / 3);
+    lv_obj_set_y(s_ui.left_arm, KITTY_PAW_Y + appendage_bob);
+    lv_obj_set_y(s_ui.right_arm, KITTY_PAW_Y - appendage_bob);
+    lv_obj_set_y(s_ui.left_foot, KITTY_FOOT_Y - appendage_bob);
+    lv_obj_set_y(s_ui.right_foot, KITTY_FOOT_Y + appendage_bob);
     const int32_t bright_pip = needs.walking ? (int32_t)((time_ms / 140) % 4) : -1;
     if (bright_pip != s_ui.displayed_score_pip) {
         for (size_t i = 0; i < 4; ++i) {
@@ -839,25 +894,25 @@ static void buddy_update(lv_timer_t *timer)
 
     if (expression_changed) {
         if (expression == BUDDY_EXPRESSION_SURPRISED) {
-            lv_obj_set_pos(s_ui.mouth, 73, 113);
-            lv_obj_set_size(s_ui.mouth, 24, 29);
+            lv_obj_set_pos(s_ui.mouth, 78, 108);
+            lv_obj_set_size(s_ui.mouth, 14, 18);
             lv_obj_set_style_radius(s_ui.mouth, LV_RADIUS_CIRCLE, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_HAPPY) {
-            lv_obj_set_pos(s_ui.mouth, 62, 110);
-            lv_obj_set_size(s_ui.mouth, 46, 27);
-            lv_obj_set_style_radius(s_ui.mouth, 14, LV_PART_MAIN);
+            lv_obj_set_pos(s_ui.mouth, 69, 111);
+            lv_obj_set_size(s_ui.mouth, 32, 12);
+            lv_obj_set_style_radius(s_ui.mouth, 6, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_TIRED) {
-            lv_obj_set_pos(s_ui.mouth, 68, 126);
-            lv_obj_set_size(s_ui.mouth, 34, 6);
-            lv_obj_set_style_radius(s_ui.mouth, 3, LV_PART_MAIN);
+            lv_obj_set_pos(s_ui.mouth, 72, 119);
+            lv_obj_set_size(s_ui.mouth, 26, 4);
+            lv_obj_set_style_radius(s_ui.mouth, 2, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_LONELY) {
-            lv_obj_set_pos(s_ui.mouth, 71, 124);
-            lv_obj_set_size(s_ui.mouth, 28, 8);
-            lv_obj_set_style_radius(s_ui.mouth, 4, LV_PART_MAIN);
+            lv_obj_set_pos(s_ui.mouth, 74, 119);
+            lv_obj_set_size(s_ui.mouth, 22, 5);
+            lv_obj_set_style_radius(s_ui.mouth, 3, LV_PART_MAIN);
         } else {
-            lv_obj_set_pos(s_ui.mouth, 70, 113);
-            lv_obj_set_size(s_ui.mouth, 30, 18);
-            lv_obj_set_style_radius(s_ui.mouth, 9, LV_PART_MAIN);
+            lv_obj_set_pos(s_ui.mouth, 77, 112);
+            lv_obj_set_size(s_ui.mouth, 16, 7);
+            lv_obj_set_style_radius(s_ui.mouth, 4, LV_PART_MAIN);
         }
 
         s_ui.displayed_expression = expression;
@@ -950,6 +1005,8 @@ static void create_buddy_ui(void)
     lv_obj_set_style_bg_color(screen, lv_color_hex(COLOR_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+
+    select_kitty_palette();
 
     create_time_scene(screen);
     make_decorations(screen);
