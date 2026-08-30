@@ -43,6 +43,10 @@
 #define BUDDY_MOTION_DAMPING 2.2f
 #define BUDDY_WALL_BOUNCE 0.24f
 #define BUDDY_MAX_SQUISH_PX 28.0f
+#define BUDDY_BODY_X 30
+#define BUDDY_BODY_Y 50
+#define BUDDY_BODY_WIDTH 170
+#define BUDDY_BODY_HEIGHT 170
 
 #define COLOR_BG 0x10142D
 #define COLOR_PANEL 0x1B2142
@@ -59,6 +63,8 @@
 #define COLOR_RAIN 0x78BCEC
 #define COLOR_CLOUD 0x8290B8
 #define COLOR_SNOW 0xE8F5FF
+#define COLOR_CREAM 0xFFF3D6
+#define COLOR_LILAC 0xC9B8FF
 
 static const char *TAG = "tamadupi";
 
@@ -77,18 +83,24 @@ typedef struct {
     lv_obj_t *right_eye;
     lv_obj_t *left_pupil;
     lv_obj_t *right_pupil;
+    lv_obj_t *left_brow;
+    lv_obj_t *right_brow;
     lv_obj_t *mouth;
     lv_obj_t *belly_glow;
     lv_obj_t *left_cheek;
     lv_obj_t *right_cheek;
+    lv_obj_t *left_ear;
+    lv_obj_t *right_ear;
+    lv_obj_t *left_arm;
+    lv_obj_t *right_arm;
+    lv_obj_t *left_foot;
+    lv_obj_t *right_foot;
     lv_obj_t *status_dot;
-    lv_obj_t *status_label;
-    lv_obj_t *hint_label;
     lv_obj_t *health_bar;
     lv_obj_t *social_bar;
-    lv_obj_t *health_value_label;
-    lv_obj_t *social_value_label;
-    lv_obj_t *steps_label;
+    lv_obj_t *health_icon;
+    lv_obj_t *social_icon;
+    lv_obj_t *footprints[4];
     lv_obj_t *weather_sun;
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
@@ -106,9 +118,6 @@ typedef struct {
     int32_t displayed_character_y;
     int32_t displayed_health;
     int32_t displayed_social;
-    uint32_t displayed_steps;
-    uint16_t displayed_cadence_spm;
-    bool displayed_walking;
     int32_t displayed_nearby_devices;
     int32_t displayed_compression;
     int displayed_deform_expression;
@@ -181,6 +190,27 @@ static lv_obj_t *make_shape(lv_obj_t *parent, int32_t x, int32_t y,
     return shape;
 }
 
+static lv_obj_t *make_sparkle(lv_obj_t *parent, int32_t x, int32_t y,
+                              uint32_t color)
+{
+    lv_obj_t *sparkle = make_shape(parent, x, y, 18, 18, color, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(sparkle, LV_OPA_TRANSP, LV_PART_MAIN);
+    make_shape(sparkle, 7, 0, 4, 18, color, 2);
+    make_shape(sparkle, 0, 7, 18, 4, color, 2);
+    return sparkle;
+}
+
+static lv_obj_t *make_heart(lv_obj_t *parent, int32_t x, int32_t y,
+                            uint32_t color)
+{
+    lv_obj_t *heart = make_shape(parent, x, y, 26, 25, color, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(heart, LV_OPA_TRANSP, LV_PART_MAIN);
+    make_shape(heart, 1, 1, 13, 13, color, LV_RADIUS_CIRCLE);
+    make_shape(heart, 12, 1, 13, 13, color, LV_RADIUS_CIRCLE);
+    make_shape(heart, 6, 8, 14, 16, color, 7);
+    return heart;
+}
+
 static void make_decorations(lv_obj_t *screen)
 {
     lv_obj_t *orb = make_shape(screen, -54, 78, 142, 142, 0x252956, LV_RADIUS_CIRCLE);
@@ -189,29 +219,26 @@ static void make_decorations(lv_obj_t *screen)
     orb = make_shape(screen, 304, 222, 108, 108, 0x35294F, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(orb, LV_OPA_50, LV_PART_MAIN);
 
-    const int16_t positions[4][2] = {{54, 147}, {292, 130}, {48, 277}, {304, 276}};
-    const char *texts[4] = {"+", "x", "x", "+"};
+    const int16_t positions[4][2] = {{42, 124}, {306, 148}, {43, 282}, {305, 291}};
 
     for (size_t i = 0; i < 4; ++i) {
-        lv_obj_t *sparkle = lv_label_create(screen);
-        lv_label_set_text(sparkle, texts[i]);
-        lv_obj_set_pos(sparkle, positions[i][0], positions[i][1]);
-        lv_obj_set_style_text_color(sparkle, lv_color_hex(COLOR_STAR), LV_PART_MAIN);
-        lv_obj_set_style_text_opa(sparkle, LV_OPA_30, LV_PART_MAIN);
+        lv_obj_t *sparkle = make_sparkle(screen, positions[i][0], positions[i][1],
+                                         COLOR_STAR);
+        lv_obj_set_style_opa(sparkle, LV_OPA_30, LV_PART_MAIN);
         s_ui.sparkles[i] = sparkle;
     }
 }
 
 static void create_weather_ambience(lv_obj_t *screen)
 {
-    s_ui.weather_sun = make_shape(screen, 280, 82, 52, 52, COLOR_STAR, LV_RADIUS_CIRCLE);
+    s_ui.weather_sun = make_shape(screen, 286, 24, 48, 48, COLOR_STAR, LV_RADIUS_CIRCLE);
     lv_obj_add_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
 
-    s_ui.weather_clouds[0] = make_shape(screen, 256, 100, 82, 29,
+    s_ui.weather_clouds[0] = make_shape(screen, 250, 44, 88, 29,
                                         COLOR_CLOUD, LV_RADIUS_CIRCLE);
-    s_ui.weather_clouds[1] = make_shape(screen, 268, 88, 38, 36,
+    s_ui.weather_clouds[1] = make_shape(screen, 266, 31, 39, 37,
                                         COLOR_CLOUD, LV_RADIUS_CIRCLE);
-    s_ui.weather_clouds[2] = make_shape(screen, 294, 91, 34, 33,
+    s_ui.weather_clouds[2] = make_shape(screen, 296, 35, 35, 34,
                                         COLOR_CLOUD, LV_RADIUS_CIRCLE);
     for (size_t i = 0; i < 3; ++i) {
         lv_obj_set_style_bg_opa(s_ui.weather_clouds[i], LV_OPA_70, LV_PART_MAIN);
@@ -247,138 +274,110 @@ static weather_kind_t classify_weather(const weather_snapshot_t *weather)
     return WEATHER_KIND_RAIN;
 }
 
-static const char *weather_name(weather_kind_t kind)
-{
-    switch (kind) {
-    case WEATHER_KIND_CLEAR:
-        return "clear";
-    case WEATHER_KIND_CLOUDY:
-        return "cloudy";
-    case WEATHER_KIND_RAIN:
-        return "rain";
-    case WEATHER_KIND_SNOW:
-        return "snow";
-    case WEATHER_KIND_STORM:
-        return "storm";
-    default:
-        return "weather";
-    }
-}
-
 static void create_header(lv_obj_t *screen)
 {
-    lv_obj_t *eyebrow = lv_label_create(screen);
-    lv_label_set_text(eyebrow, "TAMADUPI");
-    lv_obj_set_pos(eyebrow, 24, 22);
-    lv_obj_set_style_text_color(eyebrow, lv_color_hex(COLOR_MINT), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(eyebrow, 2, LV_PART_MAIN);
-
-    lv_obj_t *title = lv_label_create(screen);
-    lv_label_set_text(title, "Meet Mochi");
-    lv_obj_set_pos(title, 24, 45);
-    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-    lv_obj_t *pill = make_shape(screen, 236, 25, 108, 34, COLOR_PANEL, 17);
-    lv_obj_set_style_border_width(pill, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(pill, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
-
-    s_ui.status_dot = make_shape(pill, 12, 12, 10, 10, COLOR_MUTED, LV_RADIUS_CIRCLE);
-    s_ui.status_label = lv_label_create(pill);
-    lv_label_set_text(s_ui.status_label, "starting");
-    lv_obj_set_pos(s_ui.status_label, 29, 9);
-    lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
+    lv_obj_t *halo = make_shape(screen, 22, 22, 28, 28, COLOR_PANEL, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_border_width(halo, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(halo, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
+    s_ui.status_dot = make_shape(halo, 8, 8, 12, 12, COLOR_MUTED, LV_RADIUS_CIRCLE);
 }
 
 static void create_character(lv_obj_t *screen)
 {
-    lv_obj_t *shadow = make_shape(screen, 105, 325, 158, 24, 0x090B1D, LV_RADIUS_CIRCLE);
+    lv_obj_t *shadow = make_shape(screen, 96, 319, 176, 26, 0x090B1D, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(shadow, LV_OPA_50, LV_PART_MAIN);
 
     s_ui.character = lv_obj_create(screen);
-    lv_obj_set_pos(s_ui.character, 69, 105);
+    lv_obj_set_pos(s_ui.character, 69, 83);
     lv_obj_set_size(s_ui.character, 230, 230);
     lv_obj_set_style_bg_opa(s_ui.character, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.character, LV_OBJ_FLAG_SCROLLABLE);
-    make_shape(s_ui.character, 55, 31, 60, 74, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 115, 31, 60, 74, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 66, 43, 38, 49, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 126, 43, 38, 49, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.character, 184, 132, 35, 35, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    s_ui.left_ear = make_shape(s_ui.character, 42, 15, 66, 82,
+                               COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    s_ui.right_ear = make_shape(s_ui.character, 122, 15, 66, 82,
+                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_ear, 15, 15, 36, 53, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_ear, 15, 15, 36, 53, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(lv_obj_get_child(s_ui.left_ear, 0), LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(lv_obj_get_child(s_ui.right_ear, 0), LV_OPA_50, LV_PART_MAIN);
 
-    make_shape(s_ui.character, 20, 128, 58, 27, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 152, 128, 58, 27, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 58, 185, 49, 31, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
-    make_shape(s_ui.character, 123, 185, 49, 31, COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    s_ui.left_arm = make_shape(s_ui.character, 13, 131, 61, 34,
+                               COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    s_ui.right_arm = make_shape(s_ui.character, 156, 131, 61, 34,
+                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    s_ui.left_foot = make_shape(s_ui.character, 43, 193, 59, 34,
+                                COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    s_ui.right_foot = make_shape(s_ui.character, 128, 193, 59, 34,
+                                 COLOR_PEACH_DARK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_foot, 13, 6, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_foot, 31, 5, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_foot, 13, 5, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_foot, 31, 6, 11, 11, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
 
-    s_ui.body = make_shape(s_ui.character, 40, 57, 150, 151, COLOR_PEACH, 70);
+    s_ui.body = make_shape(s_ui.character, BUDDY_BODY_X, BUDDY_BODY_Y,
+                           BUDDY_BODY_WIDTH, BUDDY_BODY_HEIGHT, COLOR_PEACH, 82);
     lv_obj_set_style_border_width(s_ui.body, 3, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_ui.body, lv_color_hex(COLOR_PEACH_LIGHT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.body, lv_color_hex(COLOR_CREAM), LV_PART_MAIN);
 
-    s_ui.belly_glow = make_shape(s_ui.body, 23, 18, 87, 51, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
+    s_ui.belly_glow = make_shape(s_ui.body, 53, 137, 64, 28,
+                                 COLOR_CREAM, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.belly_glow, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_t *belly_heart = make_heart(s_ui.belly_glow, 19, 2, COLOR_CHEEK);
+    lv_obj_set_style_opa(belly_heart, LV_OPA_70, LV_PART_MAIN);
 
-    s_ui.left_eye = make_shape(s_ui.body, 34, 51, 30, 34, COLOR_TEXT, LV_RADIUS_CIRCLE);
-    s_ui.right_eye = make_shape(s_ui.body, 86, 51, 30, 34, COLOR_TEXT, LV_RADIUS_CIRCLE);
-    s_ui.left_pupil = make_shape(s_ui.left_eye, 9, 10, 12, 15, COLOR_INK, LV_RADIUS_CIRCLE);
-    s_ui.right_pupil = make_shape(s_ui.right_eye, 9, 10, 12, 15, COLOR_INK, LV_RADIUS_CIRCLE);
+    s_ui.left_brow = make_shape(s_ui.body, 35, 51, 29, 5, COLOR_PEACH_DARK, 3);
+    s_ui.right_brow = make_shape(s_ui.body, 106, 51, 29, 5, COLOR_PEACH_DARK, 3);
+    s_ui.left_eye = make_shape(s_ui.body, 29, 60, 42, 45,
+                               COLOR_CREAM, LV_RADIUS_CIRCLE);
+    s_ui.right_eye = make_shape(s_ui.body, 99, 60, 42, 45,
+                                COLOR_CREAM, LV_RADIUS_CIRCLE);
+    s_ui.left_pupil = make_shape(s_ui.left_eye, 12, 11, 18, 23,
+                                 COLOR_INK, LV_RADIUS_CIRCLE);
+    s_ui.right_pupil = make_shape(s_ui.right_eye, 12, 11, 18, 23,
+                                  COLOR_INK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.left_pupil, 4, 4, 6, 8, COLOR_TEXT, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.right_pupil, 4, 4, 6, 8, COLOR_TEXT, LV_RADIUS_CIRCLE);
 
-    s_ui.left_cheek = make_shape(s_ui.body, 17, 91, 27, 13, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    s_ui.left_cheek = make_shape(s_ui.body, 13, 111, 37, 17,
+                                 COLOR_CHEEK, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.left_cheek, LV_OPA_70, LV_PART_MAIN);
-    s_ui.right_cheek = make_shape(s_ui.body, 106, 91, 27, 13, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    s_ui.right_cheek = make_shape(s_ui.body, 120, 111, 37, 17,
+                                  COLOR_CHEEK, LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.right_cheek, LV_OPA_70, LV_PART_MAIN);
 
-    s_ui.mouth = make_shape(s_ui.body, 61, 91, 28, 16, COLOR_INK, 8);
+    s_ui.mouth = make_shape(s_ui.body, 70, 111, 30, 18, COLOR_INK, 9);
+    make_shape(s_ui.mouth, 7, 7, 16, 9, COLOR_CHEEK, LV_RADIUS_CIRCLE);
 }
 
 static void create_footer(lv_obj_t *screen)
 {
-    s_ui.hint_label = lv_label_create(screen);
-    lv_label_set_text(s_ui.hint_label, "Walk with me!");
-    lv_obj_set_pos(s_ui.hint_label, 20, 340);
-    lv_obj_set_width(s_ui.hint_label, 328);
-    lv_obj_set_style_text_align(s_ui.hint_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.hint_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-    lv_obj_t *card = make_shape(screen, 20, 363, 328, 72, COLOR_PANEL, 18);
+    lv_obj_t *card = make_shape(screen, 20, 370, 328, 58, COLOR_PANEL, 29);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
 
-    lv_obj_t *health_label = lv_label_create(card);
-    lv_label_set_text(health_label, "HEALTH");
-    lv_obj_set_pos(health_label, 17, 10);
-    lv_obj_set_style_text_color(health_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
+    s_ui.health_icon = make_heart(card, 14, 16, COLOR_MINT);
+    lv_obj_t *health_track = make_shape(card, 49, 23, 91, 12, 0x30385F, 6);
+    s_ui.health_bar = make_shape(health_track, 0, 0, 1, 12, COLOR_MINT, 6);
 
-    s_ui.health_value_label = lv_label_create(card);
-    lv_label_set_text(s_ui.health_value_label, "--");
-    lv_obj_set_pos(s_ui.health_value_label, 119, 9);
-    lv_obj_set_width(s_ui.health_value_label, 32);
-    lv_obj_set_style_text_align(s_ui.health_value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.health_value_label, lv_color_hex(COLOR_MINT), LV_PART_MAIN);
+    s_ui.social_icon = make_shape(card, 181, 15, 28, 28, COLOR_CHEEK,
+                                  LV_RADIUS_CIRCLE);
+    lv_obj_set_style_bg_opa(s_ui.social_icon, LV_OPA_TRANSP, LV_PART_MAIN);
+    make_shape(s_ui.social_icon, 1, 3, 12, 12, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.social_icon, 15, 3, 12, 12, COLOR_LILAC, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.social_icon, 7, 15, 14, 11, COLOR_CHEEK, LV_RADIUS_CIRCLE);
+    lv_obj_t *social_track = make_shape(card, 218, 23, 91, 12, 0x30385F, 6);
+    s_ui.social_bar = make_shape(social_track, 0, 0, 1, 12, COLOR_CHEEK, 6);
 
-    lv_obj_t *social_label = lv_label_create(card);
-    lv_label_set_text(social_label, "SOCIAL");
-    lv_obj_set_pos(social_label, 177, 10);
-    lv_obj_set_style_text_color(social_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
-
-    s_ui.social_value_label = lv_label_create(card);
-    lv_label_set_text(s_ui.social_value_label, "--");
-    lv_obj_set_pos(s_ui.social_value_label, 279, 9);
-    lv_obj_set_width(s_ui.social_value_label, 32);
-    lv_obj_set_style_text_align(s_ui.social_value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.social_value_label, lv_color_hex(COLOR_CHEEK), LV_PART_MAIN);
-
-    lv_obj_t *health_track = make_shape(card, 17, 40, 134, 10, 0x30385F, 5);
-    s_ui.health_bar = make_shape(health_track, 0, 0, 1, 10, COLOR_MINT, 5);
-    lv_obj_t *social_track = make_shape(card, 177, 40, 134, 10, 0x30385F, 5);
-    s_ui.social_bar = make_shape(social_track, 0, 0, 1, 10, COLOR_CHEEK, 5);
-
-    s_ui.steps_label = lv_label_create(card);
-    lv_label_set_text(s_ui.steps_label, "0 steps");
-    lv_obj_set_pos(s_ui.steps_label, 17, 53);
-    lv_obj_set_width(s_ui.steps_label, 134);
-    lv_obj_set_style_text_align(s_ui.steps_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.steps_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
+    const int16_t footprint_x[4] = {147, 155, 163, 171};
+    for (size_t i = 0; i < 4; ++i) {
+        s_ui.footprints[i] = make_shape(card, footprint_x[i],
+                                        (i % 2) == 0 ? 16 : 31,
+                                        7, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
+        lv_obj_set_style_opa(s_ui.footprints[i], LV_OPA_20, LV_PART_MAIN);
+    }
 }
 
 static motion_state_t motion_snapshot(void)
@@ -394,19 +393,21 @@ static void set_eye_expression(bool blink, buddy_expression_t expression, int32_
 {
     const bool surprised = expression == BUDDY_EXPRESSION_SURPRISED;
     const bool tired = expression == BUDDY_EXPRESSION_TIRED;
-    const int32_t eye_height = surprised ? 39 : (blink ? 5 : (tired ? 20 : 34));
-    const int32_t eye_y = surprised ? 48 : (blink ? 66 : (tired ? 58 : 51));
+    const int32_t eye_height = surprised ? 49 : (blink ? 5 : (tired ? 23 : 45));
+    const int32_t eye_y = surprised ? 56 : (blink ? 80 : (tired ? 70 : 60));
 
     lv_obj_set_y(s_ui.left_eye, eye_y);
     lv_obj_set_y(s_ui.right_eye, eye_y);
     lv_obj_set_height(s_ui.left_eye, eye_height);
     lv_obj_set_height(s_ui.right_eye, eye_height);
+    lv_obj_set_y(s_ui.left_brow, surprised ? 43 : (tired ? 62 : 51));
+    lv_obj_set_y(s_ui.right_brow, surprised ? 43 : (tired ? 62 : 51));
 
     const lv_opa_t pupil_opa = blink ? LV_OPA_TRANSP : LV_OPA_COVER;
-    lv_obj_set_style_bg_opa(s_ui.left_pupil, pupil_opa, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_ui.right_pupil, pupil_opa, LV_PART_MAIN);
-    lv_obj_set_x(s_ui.left_pupil, 9 + gaze_x);
-    lv_obj_set_x(s_ui.right_pupil, 9 + gaze_x);
+    lv_obj_set_style_opa(s_ui.left_pupil, pupil_opa, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_ui.right_pupil, pupil_opa, LV_PART_MAIN);
+    lv_obj_set_x(s_ui.left_pupil, 12 + gaze_x);
+    lv_obj_set_x(s_ui.right_pupil, 12 + gaze_x);
 }
 
 static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
@@ -467,30 +468,6 @@ static uint32_t buddy_body_color(buddy_expression_t expression, weather_kind_t w
     return expression == BUDDY_EXPRESSION_SURPRISED ? COLOR_PEACH_LIGHT : COLOR_PEACH;
 }
 
-static void set_buddy_hint(buddy_expression_t expression, weather_kind_t weather,
-                           const pet_state_snapshot_t *needs)
-{
-    if (expression == BUDDY_EXPRESSION_SURPRISED) {
-        lv_label_set_text(s_ui.hint_label, "Whoa! That tickles!");
-    } else if (expression == BUDDY_EXPRESSION_TILT) {
-        lv_label_set_text(s_ui.hint_label, "Wheee! Keep tilting!");
-    } else if (expression == BUDDY_EXPRESSION_TIRED) {
-        lv_label_set_text(s_ui.hint_label, "Let's go for a little walk.");
-    } else if (expression == BUDDY_EXPRESSION_LONELY) {
-        lv_label_set_text(s_ui.hint_label, needs->nearby_devices == 0 ?
-                                           "I could use some company." :
-                                           "Oh! I can sense someone nearby!");
-    } else if (weather == WEATHER_KIND_RAIN || weather == WEATHER_KIND_STORM) {
-        lv_label_set_text(s_ui.hint_label, "Rainy-day cuddles!");
-    } else if (weather == WEATHER_KIND_SNOW) {
-        lv_label_set_text(s_ui.hint_label, "Brrr... snowflakes!");
-    } else if (weather == WEATHER_KIND_CLEAR) {
-        lv_label_set_text(s_ui.hint_label, "Sunshine makes me bouncy!");
-    } else {
-        lv_label_set_text(s_ui.hint_label, "Walk with me!");
-    }
-}
-
 static float update_buddy_physics(const motion_state_t *motion, int64_t time_ms)
 {
     if (s_ui.last_physics_ms == 0) {
@@ -549,24 +526,26 @@ static void deform_buddy(float squish, buddy_expression_t expression)
         return;
     }
 
-    const int32_t body_width = 150 - compression;
-    const int32_t body_x = 40 + (s_ui.wall_side > 0 ? compression : 0);
+    const int32_t body_width = BUDDY_BODY_WIDTH - compression;
+    const int32_t body_x = BUDDY_BODY_X + (s_ui.wall_side > 0 ? compression : 0);
     const int32_t stretch = compression / 2;
-    const float scale_x = (float)body_width / 150.0f;
+    const float scale_x = (float)body_width / (float)BUDDY_BODY_WIDTH;
 
-    lv_obj_set_pos(s_ui.body, body_x, 57 - stretch / 2);
-    lv_obj_set_size(s_ui.body, body_width, 151 + stretch);
+    lv_obj_set_pos(s_ui.body, body_x, BUDDY_BODY_Y - stretch / 2);
+    lv_obj_set_size(s_ui.body, body_width, BUDDY_BODY_HEIGHT + stretch);
 
-    lv_obj_set_x(s_ui.left_eye, (int32_t)(49.0f * scale_x) - 15);
-    lv_obj_set_x(s_ui.right_eye, (int32_t)(101.0f * scale_x) - 15);
-    lv_obj_set_x(s_ui.left_cheek, (int32_t)(30.5f * scale_x) - 13);
-    lv_obj_set_x(s_ui.right_cheek, (int32_t)(119.5f * scale_x) - 13);
-    lv_obj_set_x(s_ui.belly_glow, (int32_t)(23.0f * scale_x));
-    lv_obj_set_width(s_ui.belly_glow, (int32_t)(87.0f * scale_x));
+    lv_obj_set_x(s_ui.left_eye, (int32_t)(50.0f * scale_x) - 21);
+    lv_obj_set_x(s_ui.right_eye, (int32_t)(120.0f * scale_x) - 21);
+    lv_obj_set_x(s_ui.left_brow, (int32_t)(49.5f * scale_x) - 14);
+    lv_obj_set_x(s_ui.right_brow, (int32_t)(120.5f * scale_x) - 14);
+    lv_obj_set_x(s_ui.left_cheek, (int32_t)(31.5f * scale_x) - 18);
+    lv_obj_set_x(s_ui.right_cheek, (int32_t)(138.5f * scale_x) - 18);
+    lv_obj_set_x(s_ui.belly_glow, (int32_t)(53.0f * scale_x));
+    lv_obj_set_width(s_ui.belly_glow, (int32_t)(64.0f * scale_x));
 
-    const int32_t mouth_width = expression == BUDDY_EXPRESSION_SURPRISED ? 22 :
-                                (expression == BUDDY_EXPRESSION_TIRED ? 30 :
-                                 (expression == BUDDY_EXPRESSION_LONELY ? 24 : 28));
+    const int32_t mouth_width = expression == BUDDY_EXPRESSION_SURPRISED ? 24 :
+                                (expression == BUDDY_EXPRESSION_TIRED ? 34 :
+                                 (expression == BUDDY_EXPRESSION_LONELY ? 28 : 30));
     lv_obj_set_x(s_ui.mouth, body_width / 2 - mouth_width / 2);
     s_ui.displayed_compression = compression;
     s_ui.displayed_deform_expression = expression;
@@ -585,8 +564,6 @@ static void buddy_update(lv_timer_t *timer)
         if (!s_ui.status_initialized ||
             weather.generation != s_ui.displayed_weather_generation) {
             lv_obj_set_style_bg_color(s_ui.status_dot, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
-            lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
-            lv_label_set_text(s_ui.status_label, "weather...");
             s_ui.displayed_sensor_online = motion.sensor_online;
             s_ui.displayed_weather_generation = weather.generation;
             s_ui.status_initialized = true;
@@ -610,7 +587,7 @@ static void buddy_update(lv_timer_t *timer)
                             weather_bounce;
     const int32_t movement_bob = (int32_t)clampf(motion.movement * 2.2f, 0.0f, 11.0f);
     const int32_t character_x = 69 + (int32_t)s_ui.physics_x;
-    const int32_t character_y = 105 + breathe - movement_bob;
+    const int32_t character_y = 83 + breathe - movement_bob;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
         (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
@@ -630,6 +607,22 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_character_y = character_y;
     }
 
+    const float walk_wave = sinf((float)time_ms *
+                                  (needs.walking ? 0.012f : 0.0035f));
+    const int32_t appendage_bob = needs.walking ? (int32_t)(walk_wave * 4.0f) : 0;
+    lv_obj_set_y(s_ui.left_ear, 15 - appendage_bob / 2);
+    lv_obj_set_y(s_ui.right_ear, 15 + appendage_bob / 2);
+    lv_obj_set_y(s_ui.left_arm, 131 + appendage_bob);
+    lv_obj_set_y(s_ui.right_arm, 131 - appendage_bob);
+    lv_obj_set_y(s_ui.left_foot, 193 - appendage_bob);
+    lv_obj_set_y(s_ui.right_foot, 193 + appendage_bob);
+    const size_t bright_footprint = (size_t)((time_ms / 140) % 4);
+    for (size_t i = 0; i < 4; ++i) {
+        lv_obj_set_style_opa(s_ui.footprints[i],
+                             needs.walking && i == bright_footprint ? LV_OPA_COVER : LV_OPA_20,
+                             LV_PART_MAIN);
+    }
+
     if (blink != s_ui.displayed_blink || gaze_x != s_ui.displayed_gaze_x ||
         expression != s_ui.displayed_expression) {
         set_eye_expression(blink, expression, gaze_x);
@@ -639,21 +632,21 @@ static void buddy_update(lv_timer_t *timer)
 
     if (expression_changed) {
         if (expression == BUDDY_EXPRESSION_SURPRISED) {
-            lv_obj_set_pos(s_ui.mouth, 64, 94);
-            lv_obj_set_size(s_ui.mouth, 22, 27);
+            lv_obj_set_pos(s_ui.mouth, 73, 113);
+            lv_obj_set_size(s_ui.mouth, 24, 29);
             lv_obj_set_style_radius(s_ui.mouth, LV_RADIUS_CIRCLE, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_TIRED) {
-            lv_obj_set_pos(s_ui.mouth, 60, 100);
-            lv_obj_set_size(s_ui.mouth, 30, 6);
+            lv_obj_set_pos(s_ui.mouth, 68, 126);
+            lv_obj_set_size(s_ui.mouth, 34, 6);
             lv_obj_set_style_radius(s_ui.mouth, 3, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_LONELY) {
-            lv_obj_set_pos(s_ui.mouth, 63, 99);
-            lv_obj_set_size(s_ui.mouth, 24, 8);
+            lv_obj_set_pos(s_ui.mouth, 71, 124);
+            lv_obj_set_size(s_ui.mouth, 28, 8);
             lv_obj_set_style_radius(s_ui.mouth, 4, LV_PART_MAIN);
         } else {
-            lv_obj_set_pos(s_ui.mouth, 61, 93);
-            lv_obj_set_size(s_ui.mouth, 28, 15);
-            lv_obj_set_style_radius(s_ui.mouth, 8, LV_PART_MAIN);
+            lv_obj_set_pos(s_ui.mouth, 70, 113);
+            lv_obj_set_size(s_ui.mouth, 30, 18);
+            lv_obj_set_style_radius(s_ui.mouth, 9, LV_PART_MAIN);
         }
 
         s_ui.displayed_expression = expression;
@@ -672,9 +665,8 @@ static void buddy_update(lv_timer_t *timer)
         const lv_opa_t sparkle_opa = surprised || needs.social >= 75 ?
                                      LV_OPA_COVER : LV_OPA_30;
         for (size_t i = 0; i < 4; ++i) {
-            lv_obj_set_style_text_opa(s_ui.sparkles[i], sparkle_opa, LV_PART_MAIN);
+            lv_obj_set_style_opa(s_ui.sparkles[i], sparkle_opa, LV_PART_MAIN);
         }
-        set_buddy_hint(expression, weather_kind, &needs);
         s_ui.displayed_weather_kind = weather_kind;
         s_ui.displayed_nearby_devices = needs.nearby_devices;
     }
@@ -682,69 +674,38 @@ static void buddy_update(lv_timer_t *timer)
     deform_buddy(squish, expression);
 
     if (needs.health != s_ui.displayed_health) {
-        char value[4];
-        lv_snprintf(value, sizeof(value), "%u", needs.health);
-        lv_label_set_text(s_ui.health_value_label, value);
-        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 133 / 100);
+        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 90 / 100);
+        lv_obj_set_style_opa(s_ui.health_icon,
+                             needs.health < 25 ? LV_OPA_40 : LV_OPA_COVER,
+                             LV_PART_MAIN);
         s_ui.displayed_health = needs.health;
     }
 
     if (needs.social != s_ui.displayed_social) {
-        char value[4];
-        lv_snprintf(value, sizeof(value), "%u", needs.social);
-        lv_label_set_text(s_ui.social_value_label, value);
-        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 133 / 100);
+        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 90 / 100);
+        lv_obj_set_style_opa(s_ui.social_icon,
+                             needs.social < 25 ? LV_OPA_40 : LV_OPA_COVER,
+                             LV_PART_MAIN);
         s_ui.displayed_social = needs.social;
-    }
-
-    if (needs.steps != s_ui.displayed_steps ||
-        needs.cadence_spm != s_ui.displayed_cadence_spm ||
-        needs.walking != s_ui.displayed_walking) {
-        char value[24];
-        if (needs.walking && needs.cadence_spm > 0) {
-            lv_snprintf(value, sizeof(value), "%lu | %u spm",
-                        (unsigned long)needs.steps, needs.cadence_spm);
-        } else {
-            lv_snprintf(value, sizeof(value), "%lu steps",
-                        (unsigned long)needs.steps);
-        }
-        lv_label_set_text(s_ui.steps_label, value);
-        s_ui.displayed_steps = needs.steps;
-        s_ui.displayed_cadence_spm = needs.cadence_spm;
-        s_ui.displayed_walking = needs.walking;
     }
 
     if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online ||
         weather.generation != s_ui.displayed_weather_generation) {
         uint32_t color = COLOR_MUTED;
-        char status[20];
         if (!motion.sensor_online) {
             color = COLOR_CHEEK;
-            lv_snprintf(status, sizeof(status), "no IMU");
         } else if (weather.status == WEATHER_STATUS_NEEDS_CONFIG) {
             color = COLOR_PEACH;
-            lv_snprintf(status, sizeof(status), "Wi-Fi setup");
-        } else if (weather.status == WEATHER_STATUS_CONNECTING) {
-            lv_snprintf(status, sizeof(status), "Wi-Fi...");
         } else if (weather.status == WEATHER_STATUS_UPDATING) {
             color = COLOR_RAIN;
-            lv_snprintf(status, sizeof(status), "weather...");
         } else if (weather.status == WEATHER_STATUS_ERROR) {
             color = COLOR_CHEEK;
-            lv_snprintf(status, sizeof(status), "weather err");
-        } else {
+        } else if (weather.status == WEATHER_STATUS_READY) {
             color = weather_kind == WEATHER_KIND_CLEAR ? COLOR_STAR :
                     (weather_kind == WEATHER_KIND_RAIN || weather_kind == WEATHER_KIND_STORM ?
                      COLOR_RAIN : COLOR_MINT);
-            const int temperature_c = (int)(weather.temperature_c >= 0.0f ?
-                                             weather.temperature_c + 0.5f :
-                                             weather.temperature_c - 0.5f);
-            lv_snprintf(status, sizeof(status), "%dC %s",
-                        temperature_c, weather_name(weather_kind));
         }
         lv_obj_set_style_bg_color(s_ui.status_dot, lv_color_hex(color), LV_PART_MAIN);
-        lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(color), LV_PART_MAIN);
-        lv_label_set_text(s_ui.status_label, status);
         s_ui.displayed_sensor_online = motion.sensor_online;
         s_ui.displayed_weather_generation = weather.generation;
         s_ui.status_initialized = true;
@@ -769,8 +730,6 @@ static void create_buddy_ui(void)
     s_ui.displayed_character_y = INT32_MIN;
     s_ui.displayed_health = INT32_MIN;
     s_ui.displayed_social = INT32_MIN;
-    s_ui.displayed_steps = UINT32_MAX;
-    s_ui.displayed_cadence_spm = UINT16_MAX;
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
