@@ -35,6 +35,7 @@
 #define SHAKE_ACCEL_THRESHOLD 3.5f
 #define SHAKE_GYRO_THRESHOLD_DPS 170.0f
 #define SHAKE_COOLDOWN_MS 650
+#define CELEBRATION_DURATION_MS 900
 #define BUDDY_PI 3.14159265358979323846f
 
 #define BUDDY_BODY_X 30
@@ -179,6 +180,18 @@ static float clampf(float value, float minimum, float maximum)
 static int64_t now_ms(void)
 {
     return esp_timer_get_time() / 1000;
+}
+
+static void start_celebration(int64_t time_ms)
+{
+    s_ui.celebration_started_ms = time_ms;
+    s_ui.celebration_until_ms = time_ms + CELEBRATION_DURATION_MS;
+}
+
+static void tap_event_cb(lv_event_t *event)
+{
+    (void)event;
+    start_celebration(now_ms());
 }
 
 static lv_obj_t *active_screen(void)
@@ -730,8 +743,7 @@ static void buddy_update(lv_timer_t *timer)
     }
 
     if (s_ui.displayed_score != INT32_MIN && score > s_ui.displayed_score) {
-        s_ui.celebration_started_ms = time_ms;
-        s_ui.celebration_until_ms = time_ms + 900;
+        start_celebration(time_ms);
     }
 
     const bool surprised = time_ms < s_ui.surprised_until_ms;
@@ -750,7 +762,7 @@ static void buddy_update(lv_timer_t *timer)
     float celebration_progress = 0.0f;
     if (celebrating) {
         celebration_progress = clampf((float)(time_ms - s_ui.celebration_started_ms) /
-                                      900.0f, 0.0f, 1.0f);
+                                      (float)CELEBRATION_DURATION_MS, 0.0f, 1.0f);
     }
     const int32_t flip_jump = celebrating ?
                               (int32_t)(sinf(celebration_progress * BUDDY_PI) * 25.0f) : 0;
@@ -927,6 +939,13 @@ static void create_buddy_ui(void)
     s_ui.displayed_weather_kind = -1;
     s_ui.displayed_scene_minute = INT64_MIN;
     s_ui.displayed_scene_weather_kind = -1;
+
+    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev != NULL;
+         indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            lv_indev_add_event_cb(indev, tap_event_cb, LV_EVENT_CLICKED, NULL);
+        }
+    }
     lv_timer_create(buddy_update, 66, NULL);
 }
 
