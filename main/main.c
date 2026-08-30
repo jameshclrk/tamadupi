@@ -14,6 +14,7 @@
 #include "nvs_flash.h"
 #include "pet_state.h"
 #include "social_scan.h"
+#include "weather_service.h"
 
 // The QMI8658 header defines M_PI unconditionally, so avoid colliding with newlib's definition.
 #ifdef M_PI
@@ -620,6 +621,10 @@ void app_main(void)
     ret = social_scan_start();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BLE social sensing failed: %s", esp_err_to_name(ret));
+    }
+    ret = weather_service_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Weather service failed: %s", esp_err_to_name(ret));
     }
 
     lv_display_t *display = bsp_display_start();
