@@ -14,6 +14,7 @@
 #include "nvs_flash.h"
 #include "pet_state.h"
 #include "social_scan.h"
+#include "step_tracker.h"
 #include "weather_service.h"
 
 // The QMI8658 header defines M_PI unconditionally, so avoid colliding with newlib's definition.
@@ -87,6 +88,7 @@ typedef struct {
     lv_obj_t *social_bar;
     lv_obj_t *health_value_label;
     lv_obj_t *social_value_label;
+    lv_obj_t *steps_label;
     lv_obj_t *weather_sun;
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
@@ -104,6 +106,9 @@ typedef struct {
     int32_t displayed_character_y;
     int32_t displayed_health;
     int32_t displayed_social;
+    uint32_t displayed_steps;
+    uint16_t displayed_cadence_spm;
+    bool displayed_walking;
     int32_t displayed_nearby_devices;
     int32_t displayed_compression;
     int displayed_deform_expression;
@@ -329,7 +334,7 @@ static void create_character(lv_obj_t *screen)
 static void create_footer(lv_obj_t *screen)
 {
     s_ui.hint_label = lv_label_create(screen);
-    lv_label_set_text(s_ui.hint_label, "Move me side to side!");
+    lv_label_set_text(s_ui.hint_label, "Walk with me!");
     lv_obj_set_pos(s_ui.hint_label, 20, 340);
     lv_obj_set_width(s_ui.hint_label, 328);
     lv_obj_set_style_text_align(s_ui.hint_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -367,6 +372,13 @@ static void create_footer(lv_obj_t *screen)
     s_ui.health_bar = make_shape(health_track, 0, 0, 1, 10, COLOR_MINT, 5);
     lv_obj_t *social_track = make_shape(card, 177, 40, 134, 10, 0x30385F, 5);
     s_ui.social_bar = make_shape(social_track, 0, 0, 1, 10, COLOR_CHEEK, 5);
+
+    s_ui.steps_label = lv_label_create(card);
+    lv_label_set_text(s_ui.steps_label, "0 steps");
+    lv_obj_set_pos(s_ui.steps_label, 17, 53);
+    lv_obj_set_width(s_ui.steps_label, 134);
+    lv_obj_set_style_text_align(s_ui.steps_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.steps_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
 }
 
 static motion_state_t motion_snapshot(void)
@@ -475,7 +487,7 @@ static void set_buddy_hint(buddy_expression_t expression, weather_kind_t weather
     } else if (weather == WEATHER_KIND_CLEAR) {
         lv_label_set_text(s_ui.hint_label, "Sunshine makes me bouncy!");
     } else {
-        lv_label_set_text(s_ui.hint_label, "Move me side to side!");
+        lv_label_set_text(s_ui.hint_label, "Walk with me!");
     }
 }
 
@@ -685,6 +697,23 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_social = needs.social;
     }
 
+    if (needs.steps != s_ui.displayed_steps ||
+        needs.cadence_spm != s_ui.displayed_cadence_spm ||
+        needs.walking != s_ui.displayed_walking) {
+        char value[24];
+        if (needs.walking && needs.cadence_spm > 0) {
+            lv_snprintf(value, sizeof(value), "%lu | %u spm",
+                        (unsigned long)needs.steps, needs.cadence_spm);
+        } else {
+            lv_snprintf(value, sizeof(value), "%lu steps",
+                        (unsigned long)needs.steps);
+        }
+        lv_label_set_text(s_ui.steps_label, value);
+        s_ui.displayed_steps = needs.steps;
+        s_ui.displayed_cadence_spm = needs.cadence_spm;
+        s_ui.displayed_walking = needs.walking;
+    }
+
     if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online ||
         weather.generation != s_ui.displayed_weather_generation) {
         uint32_t color = COLOR_MUTED;
@@ -740,6 +769,8 @@ static void create_buddy_ui(void)
     s_ui.displayed_character_y = INT32_MIN;
     s_ui.displayed_health = INT32_MIN;
     s_ui.displayed_social = INT32_MIN;
+    s_ui.displayed_steps = UINT32_MAX;
+    s_ui.displayed_cadence_spm = UINT16_MAX;
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
@@ -813,6 +844,7 @@ static esp_err_t start_imu(qmi8658_dev_t *imu)
 
 static void publish_motion(const qmi8658_data_t *data)
 {
+    static step_tracker_t step_tracker;
     static float filtered_roll = 0.0f;
     static float gravity_x = 0.0f;
     static bool gravity_initialized = false;
@@ -830,6 +862,9 @@ static void publish_motion(const qmi8658_data_t *data)
     const bool shake = fabsf(accel_magnitude - GRAVITY_MPS2) > SHAKE_ACCEL_THRESHOLD ||
                        gyro_magnitude > SHAKE_GYRO_THRESHOLD_DPS;
     const int64_t time_ms = now_ms();
+    const step_tracker_result_t pedometer = step_tracker_update(&step_tracker,
+                                                                 accel_magnitude,
+                                                                 time_ms);
 
     filtered_roll = filtered_roll * 0.82f + measured_roll * 0.18f;
     if (!gravity_initialized) {
@@ -849,7 +884,8 @@ static void publish_motion(const qmi8658_data_t *data)
         last_shake_ms = time_ms;
     }
     portEXIT_CRITICAL(&s_motion_lock);
-    pet_state_record_activity(movement, (float)IMU_SAMPLE_PERIOD_MS / 1000.0f);
+    pet_state_record_pedometer(pedometer.confirmed_steps, pedometer.cadence_spm,
+                               pedometer.walking);
 }
 
 void app_main(void)
