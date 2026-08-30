@@ -54,6 +54,9 @@
 #define COLOR_CHEEK 0xFF7894
 #define COLOR_INK 0x302743
 #define COLOR_STAR 0xFFE07A
+#define COLOR_RAIN 0x78BCEC
+#define COLOR_CLOUD 0x8290B8
+#define COLOR_SNOW 0xE8F5FF
 
 static const char *TAG = "tamadupi";
 
@@ -83,11 +86,16 @@ typedef struct {
     lv_obj_t *social_bar;
     lv_obj_t *health_value_label;
     lv_obj_t *social_value_label;
+    lv_obj_t *weather_sun;
+    lv_obj_t *weather_clouds[3];
+    lv_obj_t *weather_particles[7];
     lv_obj_t *sparkles[4];
     uint32_t seen_shake_generation;
     int64_t surprised_until_ms;
     bool status_initialized;
     bool displayed_sensor_online;
+    uint32_t displayed_weather_generation;
+    int displayed_weather_kind;
     int displayed_expression;
     bool displayed_blink;
     int32_t displayed_gaze_x;
@@ -95,6 +103,7 @@ typedef struct {
     int32_t displayed_character_y;
     int32_t displayed_health;
     int32_t displayed_social;
+    int32_t displayed_nearby_devices;
     int32_t displayed_compression;
     int displayed_deform_expression;
     float physics_x;
@@ -108,7 +117,18 @@ typedef enum {
     BUDDY_EXPRESSION_IDLE,
     BUDDY_EXPRESSION_TILT,
     BUDDY_EXPRESSION_SURPRISED,
+    BUDDY_EXPRESSION_TIRED,
+    BUDDY_EXPRESSION_LONELY,
 } buddy_expression_t;
+
+typedef enum {
+    WEATHER_KIND_NONE,
+    WEATHER_KIND_CLEAR,
+    WEATHER_KIND_CLOUDY,
+    WEATHER_KIND_RAIN,
+    WEATHER_KIND_SNOW,
+    WEATHER_KIND_STORM,
+} weather_kind_t;
 
 static portMUX_TYPE s_motion_lock = portMUX_INITIALIZER_UNLOCKED;
 static motion_state_t s_motion = {0};
@@ -173,6 +193,69 @@ static void make_decorations(lv_obj_t *screen)
         lv_obj_set_style_text_color(sparkle, lv_color_hex(COLOR_STAR), LV_PART_MAIN);
         lv_obj_set_style_text_opa(sparkle, LV_OPA_30, LV_PART_MAIN);
         s_ui.sparkles[i] = sparkle;
+    }
+}
+
+static void create_weather_ambience(lv_obj_t *screen)
+{
+    s_ui.weather_sun = make_shape(screen, 280, 82, 52, 52, COLOR_STAR, LV_RADIUS_CIRCLE);
+    lv_obj_add_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
+
+    s_ui.weather_clouds[0] = make_shape(screen, 256, 100, 82, 29,
+                                        COLOR_CLOUD, LV_RADIUS_CIRCLE);
+    s_ui.weather_clouds[1] = make_shape(screen, 268, 88, 38, 36,
+                                        COLOR_CLOUD, LV_RADIUS_CIRCLE);
+    s_ui.weather_clouds[2] = make_shape(screen, 294, 91, 34, 33,
+                                        COLOR_CLOUD, LV_RADIUS_CIRCLE);
+    for (size_t i = 0; i < 3; ++i) {
+        lv_obj_set_style_bg_opa(s_ui.weather_clouds[i], LV_OPA_70, LV_PART_MAIN);
+        lv_obj_add_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    const int16_t particle_x[7] = {35, 83, 132, 184, 237, 285, 330};
+    for (size_t i = 0; i < 7; ++i) {
+        s_ui.weather_particles[i] = make_shape(screen, particle_x[i], 88,
+                                                4, 16, COLOR_RAIN, 2);
+        lv_obj_add_flag(s_ui.weather_particles[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static weather_kind_t classify_weather(const weather_snapshot_t *weather)
+{
+    if (weather->status != WEATHER_STATUS_READY) {
+        return WEATHER_KIND_NONE;
+    }
+    const int code = weather->weather_code;
+    if (code == 0) {
+        return WEATHER_KIND_CLEAR;
+    }
+    if (code <= 48) {
+        return WEATHER_KIND_CLOUDY;
+    }
+    if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) {
+        return WEATHER_KIND_SNOW;
+    }
+    if (code >= 95) {
+        return WEATHER_KIND_STORM;
+    }
+    return WEATHER_KIND_RAIN;
+}
+
+static const char *weather_name(weather_kind_t kind)
+{
+    switch (kind) {
+    case WEATHER_KIND_CLEAR:
+        return "clear";
+    case WEATHER_KIND_CLOUDY:
+        return "cloudy";
+    case WEATHER_KIND_RAIN:
+        return "rain";
+    case WEATHER_KIND_SNOW:
+        return "snow";
+    case WEATHER_KIND_STORM:
+        return "storm";
+    default:
+        return "weather";
     }
 }
 
@@ -294,10 +377,12 @@ static motion_state_t motion_snapshot(void)
     return snapshot;
 }
 
-static void set_eye_expression(bool blink, bool surprised, int32_t gaze_x)
+static void set_eye_expression(bool blink, buddy_expression_t expression, int32_t gaze_x)
 {
-    const int32_t eye_height = surprised ? 39 : (blink ? 5 : 34);
-    const int32_t eye_y = surprised ? 48 : (blink ? 66 : 51);
+    const bool surprised = expression == BUDDY_EXPRESSION_SURPRISED;
+    const bool tired = expression == BUDDY_EXPRESSION_TIRED;
+    const int32_t eye_height = surprised ? 39 : (blink ? 5 : (tired ? 20 : 34));
+    const int32_t eye_y = surprised ? 48 : (blink ? 66 : (tired ? 58 : 51));
 
     lv_obj_set_y(s_ui.left_eye, eye_y);
     lv_obj_set_y(s_ui.right_eye, eye_y);
@@ -309,6 +394,88 @@ static void set_eye_expression(bool blink, bool surprised, int32_t gaze_x)
     lv_obj_set_style_bg_opa(s_ui.right_pupil, pupil_opa, LV_PART_MAIN);
     lv_obj_set_x(s_ui.left_pupil, 9 + gaze_x);
     lv_obj_set_x(s_ui.right_pupil, 9 + gaze_x);
+}
+
+static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
+{
+    const bool show_sun = kind == WEATHER_KIND_CLEAR;
+    const bool show_cloud = kind == WEATHER_KIND_CLOUDY || kind == WEATHER_KIND_RAIN ||
+                            kind == WEATHER_KIND_SNOW || kind == WEATHER_KIND_STORM;
+    const bool show_particles = kind == WEATHER_KIND_RAIN || kind == WEATHER_KIND_SNOW ||
+                                kind == WEATHER_KIND_STORM;
+
+    if (show_sun) {
+        lv_obj_clear_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ui.weather_sun, LV_OBJ_FLAG_HIDDEN);
+    }
+    for (size_t i = 0; i < 3; ++i) {
+        if (show_cloud) {
+            lv_obj_clear_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    for (size_t i = 0; i < 7; ++i) {
+        lv_obj_t *particle = s_ui.weather_particles[i];
+        if (!show_particles) {
+            lv_obj_add_flag(particle, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_clear_flag(particle, LV_OBJ_FLAG_HIDDEN);
+        const int32_t y = 105 + (int32_t)((time_ms / (kind == WEATHER_KIND_SNOW ? 15 : 7) +
+                                           (int64_t)i * 47) % 205);
+        lv_obj_set_y(particle, y);
+        if (kind == WEATHER_KIND_SNOW) {
+            lv_obj_set_size(particle, 7, 7);
+            lv_obj_set_style_radius(particle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_SNOW), LV_PART_MAIN);
+        } else {
+            lv_obj_set_size(particle, kind == WEATHER_KIND_STORM ? 5 : 4,
+                            kind == WEATHER_KIND_STORM ? 20 : 16);
+            lv_obj_set_style_radius(particle, 2, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
+        }
+    }
+}
+
+static uint32_t buddy_body_color(buddy_expression_t expression, weather_kind_t weather)
+{
+    if (expression == BUDDY_EXPRESSION_TIRED) {
+        return 0xD89A78;
+    }
+    if (weather == WEATHER_KIND_RAIN || weather == WEATHER_KIND_STORM) {
+        return 0xE9A27E;
+    }
+    if (weather == WEATHER_KIND_SNOW) {
+        return COLOR_PEACH_LIGHT;
+    }
+    return expression == BUDDY_EXPRESSION_SURPRISED ? COLOR_PEACH_LIGHT : COLOR_PEACH;
+}
+
+static void set_buddy_hint(buddy_expression_t expression, weather_kind_t weather,
+                           const pet_state_snapshot_t *needs)
+{
+    if (expression == BUDDY_EXPRESSION_SURPRISED) {
+        lv_label_set_text(s_ui.hint_label, "Whoa! That tickles!");
+    } else if (expression == BUDDY_EXPRESSION_TILT) {
+        lv_label_set_text(s_ui.hint_label, "Wheee! Keep tilting!");
+    } else if (expression == BUDDY_EXPRESSION_TIRED) {
+        lv_label_set_text(s_ui.hint_label, "Let's go for a little walk.");
+    } else if (expression == BUDDY_EXPRESSION_LONELY) {
+        lv_label_set_text(s_ui.hint_label, needs->nearby_devices == 0 ?
+                                           "I could use some company." :
+                                           "Oh! I can sense someone nearby!");
+    } else if (weather == WEATHER_KIND_RAIN || weather == WEATHER_KIND_STORM) {
+        lv_label_set_text(s_ui.hint_label, "Rainy-day cuddles!");
+    } else if (weather == WEATHER_KIND_SNOW) {
+        lv_label_set_text(s_ui.hint_label, "Brrr... snowflakes!");
+    } else if (weather == WEATHER_KIND_CLEAR) {
+        lv_label_set_text(s_ui.hint_label, "Sunshine makes me bouncy!");
+    } else {
+        lv_label_set_text(s_ui.hint_label, "Move me side to side!");
+    }
 }
 
 static float update_buddy_physics(const motion_state_t *motion, int64_t time_ms)
@@ -384,7 +551,9 @@ static void deform_buddy(float squish, buddy_expression_t expression)
     lv_obj_set_x(s_ui.belly_glow, (int32_t)(23.0f * scale_x));
     lv_obj_set_width(s_ui.belly_glow, (int32_t)(87.0f * scale_x));
 
-    const int32_t mouth_width = expression == BUDDY_EXPRESSION_SURPRISED ? 22 : 28;
+    const int32_t mouth_width = expression == BUDDY_EXPRESSION_SURPRISED ? 22 :
+                                (expression == BUDDY_EXPRESSION_TIRED ? 30 :
+                                 (expression == BUDDY_EXPRESSION_LONELY ? 24 : 28));
     lv_obj_set_x(s_ui.mouth, body_width / 2 - mouth_width / 2);
     s_ui.displayed_compression = compression;
     s_ui.displayed_deform_expression = expression;
@@ -395,6 +564,8 @@ static void buddy_update(lv_timer_t *timer)
     (void)timer;
     const motion_state_t motion = motion_snapshot();
     const pet_state_snapshot_t needs = pet_state_snapshot();
+    const weather_snapshot_t weather = weather_service_snapshot();
+    const weather_kind_t weather_kind = classify_weather(&weather);
     const int64_t time_ms = now_ms();
 
     if (motion.shake_generation != s_ui.seen_shake_generation) {
@@ -407,14 +578,25 @@ static void buddy_update(lv_timer_t *timer)
     const float roll = clampf(motion.roll_deg, -28.0f, 28.0f);
     const float squish = update_buddy_physics(&motion, time_ms);
     const float phase = (float)(time_ms % 1800) / 1800.0f;
-    const int32_t breathe = (int32_t)(sinf(phase * 2.0f * BUDDY_PI) * 2.0f);
+    const int32_t weather_bounce = weather_kind == WEATHER_KIND_CLEAR ?
+                                   (int32_t)(sinf(phase * 4.0f * BUDDY_PI) * 1.5f) : 0;
+    const int32_t breathe = (int32_t)(sinf(phase * 2.0f * BUDDY_PI) * 2.0f) +
+                            weather_bounce;
     const int32_t movement_bob = (int32_t)clampf(motion.movement * 2.2f, 0.0f, 11.0f);
     const int32_t character_x = 69 + (int32_t)s_ui.physics_x;
     const int32_t character_y = 105 + breathe - movement_bob;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
-                                                    (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
-                                                                         BUDDY_EXPRESSION_IDLE);
+        (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
+         (needs.health < 25 ? BUDDY_EXPRESSION_TIRED :
+          (needs.social < 25 ? BUDDY_EXPRESSION_LONELY : BUDDY_EXPRESSION_IDLE)));
+    const bool expression_changed = expression != s_ui.displayed_expression;
+    const bool needs_changed = needs.health != s_ui.displayed_health ||
+                               needs.social != s_ui.displayed_social ||
+                               needs.nearby_devices != s_ui.displayed_nearby_devices;
+    const bool weather_changed = weather_kind != s_ui.displayed_weather_kind;
+
+    update_weather_ambience(weather_kind, time_ms);
 
     if (character_x != s_ui.displayed_character_x || character_y != s_ui.displayed_character_y) {
         lv_obj_set_pos(s_ui.character, character_x, character_y);
@@ -424,33 +606,51 @@ static void buddy_update(lv_timer_t *timer)
 
     if (blink != s_ui.displayed_blink || gaze_x != s_ui.displayed_gaze_x ||
         expression != s_ui.displayed_expression) {
-        set_eye_expression(blink, surprised, gaze_x);
+        set_eye_expression(blink, expression, gaze_x);
         s_ui.displayed_blink = blink;
         s_ui.displayed_gaze_x = gaze_x;
     }
 
-    if (expression != s_ui.displayed_expression) {
+    if (expression_changed) {
         if (expression == BUDDY_EXPRESSION_SURPRISED) {
             lv_obj_set_pos(s_ui.mouth, 64, 94);
             lv_obj_set_size(s_ui.mouth, 22, 27);
             lv_obj_set_style_radius(s_ui.mouth, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(s_ui.body, lv_color_hex(COLOR_PEACH_LIGHT), LV_PART_MAIN);
-            lv_label_set_text(s_ui.hint_label, "Whoa! That tickles!");
+        } else if (expression == BUDDY_EXPRESSION_TIRED) {
+            lv_obj_set_pos(s_ui.mouth, 60, 100);
+            lv_obj_set_size(s_ui.mouth, 30, 6);
+            lv_obj_set_style_radius(s_ui.mouth, 3, LV_PART_MAIN);
+        } else if (expression == BUDDY_EXPRESSION_LONELY) {
+            lv_obj_set_pos(s_ui.mouth, 63, 99);
+            lv_obj_set_size(s_ui.mouth, 24, 8);
+            lv_obj_set_style_radius(s_ui.mouth, 4, LV_PART_MAIN);
         } else {
             lv_obj_set_pos(s_ui.mouth, 61, 93);
             lv_obj_set_size(s_ui.mouth, 28, 15);
             lv_obj_set_style_radius(s_ui.mouth, 8, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(s_ui.body, lv_color_hex(COLOR_PEACH), LV_PART_MAIN);
-            lv_label_set_text(s_ui.hint_label, expression == BUDDY_EXPRESSION_TILT ?
-                                               "Wheee! Keep tilting!" :
-                                               "Move me side to side!");
         }
 
-        const lv_opa_t sparkle_opa = surprised ? LV_OPA_COVER : LV_OPA_30;
+        s_ui.displayed_expression = expression;
+    }
+
+    if (expression_changed || needs_changed || weather_changed) {
+        lv_obj_set_style_bg_color(s_ui.body,
+                                  lv_color_hex(buddy_body_color(expression, weather_kind)),
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_ui.left_cheek,
+                                expression == BUDDY_EXPRESSION_LONELY ? LV_OPA_30 : LV_OPA_70,
+                                LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_ui.right_cheek,
+                                expression == BUDDY_EXPRESSION_LONELY ? LV_OPA_30 : LV_OPA_70,
+                                LV_PART_MAIN);
+        const lv_opa_t sparkle_opa = surprised || needs.social >= 75 ?
+                                     LV_OPA_COVER : LV_OPA_30;
         for (size_t i = 0; i < 4; ++i) {
             lv_obj_set_style_text_opa(s_ui.sparkles[i], sparkle_opa, LV_PART_MAIN);
         }
-        s_ui.displayed_expression = expression;
+        set_buddy_hint(expression, weather_kind, &needs);
+        s_ui.displayed_weather_kind = weather_kind;
+        s_ui.displayed_nearby_devices = needs.nearby_devices;
     }
 
     deform_buddy(squish, expression);
@@ -471,12 +671,36 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_social = needs.social;
     }
 
-    if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online) {
-        const uint32_t color = motion.sensor_online ? COLOR_MINT : COLOR_CHEEK;
+    if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online ||
+        weather.generation != s_ui.displayed_weather_generation) {
+        uint32_t color = COLOR_MUTED;
+        char status[20];
+        if (!motion.sensor_online) {
+            color = COLOR_CHEEK;
+            lv_snprintf(status, sizeof(status), "no IMU");
+        } else if (weather.status == WEATHER_STATUS_NEEDS_CONFIG) {
+            color = COLOR_PEACH;
+            lv_snprintf(status, sizeof(status), "Wi-Fi setup");
+        } else if (weather.status == WEATHER_STATUS_CONNECTING) {
+            lv_snprintf(status, sizeof(status), "Wi-Fi...");
+        } else if (weather.status == WEATHER_STATUS_UPDATING) {
+            color = COLOR_RAIN;
+            lv_snprintf(status, sizeof(status), "weather...");
+        } else if (weather.status == WEATHER_STATUS_ERROR) {
+            color = COLOR_CHEEK;
+            lv_snprintf(status, sizeof(status), "weather err");
+        } else {
+            color = weather_kind == WEATHER_KIND_CLEAR ? COLOR_STAR :
+                    (weather_kind == WEATHER_KIND_RAIN || weather_kind == WEATHER_KIND_STORM ?
+                     COLOR_RAIN : COLOR_MINT);
+            lv_snprintf(status, sizeof(status), "%.0fC %s",
+                        (double)weather.temperature_c, weather_name(weather_kind));
+        }
         lv_obj_set_style_bg_color(s_ui.status_dot, lv_color_hex(color), LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ui.status_label, lv_color_hex(color), LV_PART_MAIN);
-        lv_label_set_text(s_ui.status_label, motion.sensor_online ? "IMU live" : "no IMU");
+        lv_label_set_text(s_ui.status_label, status);
         s_ui.displayed_sensor_online = motion.sensor_online;
+        s_ui.displayed_weather_generation = weather.generation;
         s_ui.status_initialized = true;
     }
 }
@@ -489,6 +713,7 @@ static void create_buddy_ui(void)
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
     make_decorations(screen);
+    create_weather_ambience(screen);
     create_header(screen);
     create_character(screen);
     create_footer(screen);
@@ -498,6 +723,9 @@ static void create_buddy_ui(void)
     s_ui.displayed_character_y = INT32_MIN;
     s_ui.displayed_health = INT32_MIN;
     s_ui.displayed_social = INT32_MIN;
+    s_ui.displayed_nearby_devices = INT32_MIN;
+    s_ui.displayed_weather_generation = UINT32_MAX;
+    s_ui.displayed_weather_kind = -1;
     s_ui.displayed_compression = INT32_MIN;
     s_ui.displayed_deform_expression = -1;
     lv_timer_create(buddy_update, 66, NULL);
