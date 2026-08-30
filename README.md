@@ -1,10 +1,8 @@
-# 01_project_template
+# Motion Buddy Demo
 
 [简体中文](README_ZH.md)
 
-Minimal ESP-IDF project skeleton adapted from the ESP32-P4 platform example.
-
-Unlike an empty project, this template already declares the online `waveshare/esp32_s3_touch_amoled_1_8` dependency and exposes the BSP board definitions, so it is a practical starting point for new board projects.
+An interactive LVGL character demo for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Mochi reacts to the onboard QMI8658 motion sensor in real time.
 
 ## Hardware
 
@@ -23,10 +21,16 @@ Replace `PORT` with the serial port for the board.
 
 ## Expected Result
 
-The serial monitor prints the board name, I2C pins, display resolution, and a periodic `template running` message. Copy this project when starting a new ESP-IDF application that should use the managed BSP component.
+The AMOLED shows a small animated character:
 
-## Notes
+- Tilt the board left and right to make Mochi lean and look around.
+- Move the board side to side to slide Mochi around; Mochi squishes on impact with the screen edges.
+- General movement makes Mochi bounce and fills the motion meter.
+- Give the board a gentle shake to trigger Mochi's surprised expression.
+- Leave it still and Mochi breathes and blinks.
 
-- Initialize only the board services your application needs, such as display, touch, SD card, audio, RTC, or IMU.
-- Keep managed dependencies in `main/idf_component.yml`.
-- Do not copy generated `managed_components/`, `dependencies.lock`, or local `sdkconfig` files into a reusable template.
+The status pill reports `IMU live` when the sensor is connected. If it shows `no IMU`, check the serial monitor for the I2C or QMI8658 error.
+
+## Tuning
+
+Motion thresholds, sampling rate, and UI colors are grouped near the top of `main/main.c` for quick experimentation.
