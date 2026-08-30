@@ -1,0 +1,10 @@
+# ESP-IDF generated files
+/build/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+
+# Editor and operating system files
+.DS_Store
+*.swp
+*.swo
