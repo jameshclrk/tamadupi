@@ -30,9 +30,26 @@ typedef struct {
 static const char *TAG = "weather";
 static EventGroupHandle_t s_wifi_events;
 static portMUX_TYPE s_weather_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_wifi_connection_desired = true;
 static weather_snapshot_t s_weather = {
     .status = WEATHER_STATUS_NEEDS_CONFIG,
 };
+
+static bool wifi_connection_desired(void)
+{
+    bool desired;
+    portENTER_CRITICAL(&s_weather_lock);
+    desired = s_wifi_connection_desired;
+    portEXIT_CRITICAL(&s_weather_lock);
+    return desired;
+}
+
+static void set_wifi_connection_desired(bool desired)
+{
+    portENTER_CRITICAL(&s_weather_lock);
+    s_wifi_connection_desired = desired;
+    portEXIT_CRITICAL(&s_weather_lock);
+}
 
 static void set_connection_state(bool connected)
 {
@@ -40,7 +57,8 @@ static void set_connection_state(bool connected)
     s_weather.wifi_connected = connected;
     if (connected && s_weather.status == WEATHER_STATUS_CONNECTING) {
         s_weather.status = WEATHER_STATUS_UPDATING;
-    } else if (!connected && s_weather.status != WEATHER_STATUS_NEEDS_CONFIG) {
+    } else if (!connected && s_wifi_connection_desired &&
+               s_weather.status != WEATHER_STATUS_NEEDS_CONFIG) {
         s_weather.status = WEATHER_STATUS_CONNECTING;
     }
     ++s_weather.generation;
@@ -78,11 +96,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     (void)arg;
     (void)event_data;
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (wifi_connection_desired()) {
+            esp_wifi_connect();
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
         set_connection_state(false);
-        esp_wifi_connect();
+        if (wifi_connection_desired()) {
+            esp_wifi_connect();
+        }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
+        xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
+        set_connection_state(false);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         set_connection_state(true);
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
@@ -196,12 +221,22 @@ static void weather_task(void *arg)
 
         const TickType_t delay_ticks = pdMS_TO_TICKS(ret == ESP_OK ?
                                                      WEATHER_REFRESH_MS : WEATHER_RETRY_MS);
-        for (TickType_t elapsed = 0; elapsed < delay_ticks;
-             elapsed += pdMS_TO_TICKS(1000)) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            if ((xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED_BIT) == 0) {
-                break;
-            }
+        set_wifi_connection_desired(false);
+        const esp_err_t stop_ret = esp_wifi_stop();
+        const bool wifi_stopped = stop_ret == ESP_OK || stop_ret == ESP_ERR_WIFI_NOT_STARTED;
+        if (!wifi_stopped) {
+            ESP_LOGW(TAG, "Could not stop Wi-Fi between updates: %s",
+                     esp_err_to_name(stop_ret));
+        }
+        vTaskDelay(delay_ticks);
+
+        set_wifi_connection_desired(true);
+        set_weather_status(WEATHER_STATUS_CONNECTING);
+        const esp_err_t start_ret = wifi_stopped ? esp_wifi_start() : esp_wifi_connect();
+        if (start_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Could not restart Wi-Fi for weather update: %s",
+                     esp_err_to_name(start_ret));
+            set_weather_status(WEATHER_STATUS_ERROR);
         }
     }
 }
