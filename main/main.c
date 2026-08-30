@@ -96,6 +96,7 @@ typedef struct {
     lv_obj_t *score_bar;
     lv_obj_t *score_icon;
     lv_obj_t *score_pips[4];
+    lv_obj_t *score_label;
     lv_obj_t *multiplier_badge;
     lv_obj_t *multiplier_label;
     lv_obj_t *weather_clouds[3];
@@ -523,14 +524,21 @@ static void create_footer(lv_obj_t *screen)
     make_shape(s_ui.score_icon, 9, 11, 8, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
     make_shape(s_ui.score_icon, 6, 8, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
     make_shape(s_ui.score_icon, 16, 7, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
-    lv_obj_t *score_track = make_shape(card, 47, 21, 210, 16, 0x30385F, 8);
+    lv_obj_t *score_track = make_shape(card, 47, 21, 170, 16, 0x30385F, 8);
     s_ui.score_bar = make_shape(score_track, 0, 0, 1, 16, COLOR_MINT, 8);
 
     for (size_t i = 0; i < 4; ++i) {
-        s_ui.score_pips[i] = make_shape(score_track, 39 + (int32_t)i * 41, 5,
+        s_ui.score_pips[i] = make_shape(score_track, 31 + (int32_t)i * 33, 5,
                                        6, 6, COLOR_CREAM, LV_RADIUS_CIRCLE);
         lv_obj_set_style_opa(s_ui.score_pips[i], LV_OPA_30, LV_PART_MAIN);
     }
+
+    lv_obj_t *score_badge = make_shape(card, 222, 14, 38, 30, 0x30385F, 15);
+    s_ui.score_label = lv_label_create(score_badge);
+    lv_label_set_text(s_ui.score_label, "0");
+    lv_obj_set_style_text_color(s_ui.score_label, lv_color_hex(COLOR_CREAM),
+                                LV_PART_MAIN);
+    lv_obj_center(s_ui.score_label);
 
     s_ui.multiplier_badge = make_shape(card, 267, 12, 47, 34,
                                        COLOR_PANEL_EDGE, 17);
@@ -843,9 +851,12 @@ static void buddy_update(lv_timer_t *timer)
     }
 
     if (score != s_ui.displayed_score) {
-        lv_obj_set_width(s_ui.score_bar, 1 + score * 209 / 100);
+        char score_text[4];
+        lv_obj_set_width(s_ui.score_bar, 1 + score * 169 / 100);
         lv_obj_set_style_opa(s_ui.score_icon,
                              score < 25 ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
+        lv_snprintf(score_text, sizeof(score_text), "%u", score);
+        lv_label_set_text(s_ui.score_label, score_text);
         s_ui.displayed_score = score;
     }
     lv_obj_set_style_bg_color(s_ui.score_bar,
