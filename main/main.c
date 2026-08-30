@@ -96,6 +96,8 @@ typedef struct {
     lv_obj_t *score_bar;
     lv_obj_t *score_icon;
     lv_obj_t *score_pips[4];
+    lv_obj_t *multiplier_badge;
+    lv_obj_t *multiplier_label;
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
     lv_obj_t *scene_horizon;
@@ -122,6 +124,7 @@ typedef struct {
     int32_t displayed_health;
     int32_t displayed_social;
     int32_t displayed_score;
+    int32_t displayed_multiplier;
     int32_t displayed_nearby_devices;
     int64_t displayed_scene_minute;
     int displayed_scene_weather_kind;
@@ -175,11 +178,6 @@ static float clampf(float value, float minimum, float maximum)
 static int64_t now_ms(void)
 {
     return esp_timer_get_time() / 1000;
-}
-
-static uint8_t overall_activity_score(const pet_state_snapshot_t *needs)
-{
-    return (uint8_t)(((uint16_t)needs->health + (uint16_t)needs->social + 1U) / 2U);
 }
 
 static lv_obj_t *active_screen(void)
@@ -525,14 +523,22 @@ static void create_footer(lv_obj_t *screen)
     make_shape(s_ui.score_icon, 9, 11, 8, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
     make_shape(s_ui.score_icon, 6, 8, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
     make_shape(s_ui.score_icon, 16, 7, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
-    lv_obj_t *score_track = make_shape(card, 47, 21, 264, 16, 0x30385F, 8);
+    lv_obj_t *score_track = make_shape(card, 47, 21, 210, 16, 0x30385F, 8);
     s_ui.score_bar = make_shape(score_track, 0, 0, 1, 16, COLOR_MINT, 8);
 
     for (size_t i = 0; i < 4; ++i) {
-        s_ui.score_pips[i] = make_shape(score_track, 49 + (int32_t)i * 52, 5,
+        s_ui.score_pips[i] = make_shape(score_track, 39 + (int32_t)i * 41, 5,
                                        6, 6, COLOR_CREAM, LV_RADIUS_CIRCLE);
         lv_obj_set_style_opa(s_ui.score_pips[i], LV_OPA_30, LV_PART_MAIN);
     }
+
+    s_ui.multiplier_badge = make_shape(card, 267, 12, 47, 34,
+                                       COLOR_PANEL_EDGE, 17);
+    s_ui.multiplier_label = lv_label_create(s_ui.multiplier_badge);
+    lv_label_set_text(s_ui.multiplier_label, "1x");
+    lv_obj_set_style_text_color(s_ui.multiplier_label, lv_color_hex(COLOR_CREAM),
+                                LV_PART_MAIN);
+    lv_obj_center(s_ui.multiplier_label);
 }
 
 static motion_state_t motion_snapshot(void)
@@ -697,7 +703,7 @@ static void buddy_update(lv_timer_t *timer)
     const weather_snapshot_t weather = weather_service_snapshot();
     const weather_kind_t weather_kind = classify_weather(&weather);
     const int64_t time_ms = now_ms();
-    const uint8_t score = overall_activity_score(&needs);
+    const uint8_t score = needs.health;
 
     if (weather.status == WEATHER_STATUS_UPDATING) {
         if (!s_ui.status_initialized ||
@@ -837,7 +843,7 @@ static void buddy_update(lv_timer_t *timer)
     }
 
     if (score != s_ui.displayed_score) {
-        lv_obj_set_width(s_ui.score_bar, 1 + score * 263 / 100);
+        lv_obj_set_width(s_ui.score_bar, 1 + score * 209 / 100);
         lv_obj_set_style_opa(s_ui.score_icon,
                              score < 25 ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
         s_ui.displayed_score = score;
@@ -845,6 +851,19 @@ static void buddy_update(lv_timer_t *timer)
     lv_obj_set_style_bg_color(s_ui.score_bar,
                               lv_color_hex(needs.walking || celebrating ? COLOR_STAR : COLOR_MINT),
                               LV_PART_MAIN);
+    if (needs.social_multiplier != s_ui.displayed_multiplier) {
+        const char *text = needs.social_multiplier >= 3 ? "3x" :
+                           (needs.social_multiplier == 2 ? "2x" : "1x");
+        const uint32_t color = needs.social_multiplier >= 3 ? COLOR_STAR :
+                               (needs.social_multiplier == 2 ? COLOR_LILAC : COLOR_PANEL_EDGE);
+        lv_label_set_text(s_ui.multiplier_label, text);
+        lv_obj_set_style_bg_color(s_ui.multiplier_badge, lv_color_hex(color), LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ui.multiplier_label,
+                                    lv_color_hex(needs.social_multiplier >= 3 ?
+                                                 COLOR_INK : COLOR_CREAM),
+                                    LV_PART_MAIN);
+        s_ui.displayed_multiplier = needs.social_multiplier;
+    }
     s_ui.displayed_health = needs.health;
     s_ui.displayed_social = needs.social;
 
@@ -891,6 +910,7 @@ static void create_buddy_ui(void)
     s_ui.displayed_health = INT32_MIN;
     s_ui.displayed_social = INT32_MIN;
     s_ui.displayed_score = INT32_MIN;
+    s_ui.displayed_multiplier = INT32_MIN;
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
