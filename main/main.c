@@ -466,8 +466,6 @@ static void create_character(lv_obj_t *screen)
     lv_obj_set_style_bg_opa(s_ui.character, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.character, 0, LV_PART_MAIN);
-    lv_obj_set_style_transform_pivot_x(s_ui.character, 115, LV_PART_MAIN);
-    lv_obj_set_style_transform_pivot_y(s_ui.character, 140, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.character, LV_OBJ_FLAG_SCROLLABLE);
     make_shape(s_ui.character, 184, 132, 35, 35, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
     s_ui.left_ear = make_shape(s_ui.character, 42, 15, 66, 82,
@@ -764,10 +762,13 @@ static void buddy_update(lv_timer_t *timer)
         celebration_progress = clampf((float)(time_ms - s_ui.celebration_started_ms) /
                                       (float)CELEBRATION_DURATION_MS, 0.0f, 1.0f);
     }
-    const int32_t flip_jump = celebrating ?
-                              (int32_t)(sinf(celebration_progress * BUDDY_PI) * 25.0f) : 0;
-    const int32_t character_x = 69 + dance_x;
-    const int32_t character_y = 83 + breathe - dance_jump - flip_jump;
+    const float celebration_wave = sinf(celebration_progress * 4.0f * BUDDY_PI);
+    const int32_t celebration_x = celebrating ? (int32_t)(celebration_wave * 9.0f) : 0;
+    const int32_t celebration_jump = celebrating ?
+        (int32_t)(sinf(celebration_progress * BUDDY_PI) * 22.0f +
+                  fabsf(celebration_wave) * 7.0f) : 0;
+    const int32_t character_x = 69 + dance_x + celebration_x;
+    const int32_t character_y = 83 + breathe - dance_jump - celebration_jump;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
         (celebrating || needs.walking || score >= 85 ? BUDDY_EXPRESSION_HAPPY :
@@ -789,13 +790,8 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_character_y = character_y;
     }
 
-    const int32_t character_rotation = celebrating ?
-        (int32_t)(celebration_progress * 3600.0f) :
-        (needs.walking ? (int32_t)(dance_wave * 55.0f) : 0);
-    lv_obj_set_style_transform_rotation(s_ui.character, character_rotation, LV_PART_MAIN);
-
-    const int32_t appendage_bob = (needs.walking || celebrating) ?
-                                  (int32_t)(dance_wave * 8.0f) : 0;
+    const int32_t appendage_bob = celebrating ? (int32_t)(celebration_wave * 12.0f) :
+                                  (needs.walking ? (int32_t)(dance_wave * 8.0f) : 0);
     lv_obj_set_y(s_ui.left_ear, 15 - appendage_bob / 2);
     lv_obj_set_y(s_ui.right_ear, 15 + appendage_bob / 2);
     lv_obj_set_y(s_ui.left_arm, 131 + appendage_bob);
