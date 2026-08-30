@@ -37,7 +37,9 @@ The AMOLED shows a small animated character:
 
 - Tilt the board left and right to make Mochi lean and look around.
 - Move the board side to side to slide Mochi around; Mochi squishes on impact with the screen edges.
-- General movement makes Mochi bounce and gradually improves Health.
+- Walking with Tamadupi counts steps and gradually improves Health. The first
+  three cadence-consistent impacts confirm a walk, which filters out tilting,
+  isolated bumps, and fast shaking.
 - Give the board a gentle shake to trigger Mochi's surprised expression.
 - Nearby BLE advertisers raise Social over time. Addresses are kept only in RAM,
   are never logged, and expire after ten minutes.
@@ -52,6 +54,16 @@ serial monitor for the I2C or QMI8658 error.
 
 ## Tuning
 
-Motion thresholds, sampling rate, and UI colors are grouped near the top of
-`main/main.c` for quick experimentation. Never put real credentials in
-`secrets.example.h`.
+Animation thresholds, sampling rate, and UI colors are grouped near the top of
+`main/main.c`. Pedometer timing and acceleration thresholds are in
+`main/step_tracker.c`.
+
+Run the host-side pedometer checks with:
+
+```bash
+cc -std=c11 -Wall -Wextra -Werror -I main \
+  main/step_tracker.c tests/step_tracker_test.c -lm \
+  -o /tmp/tamadupi-step-test && /tmp/tamadupi-step-test
+```
+
+Never put real credentials in `secrets.example.h`.
