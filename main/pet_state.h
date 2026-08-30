@@ -11,6 +11,7 @@ typedef struct {
     uint16_t nearby_devices;
     uint16_t cadence_spm;
     uint32_t steps;
+    uint8_t social_multiplier;
     float activity_level;
     bool walking;
 } pet_state_snapshot_t;

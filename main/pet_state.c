@@ -11,7 +11,8 @@
 #define DEFAULT_SOCIAL 35.0f
 #define NEEDS_UPDATE_PERIOD_MS 60000
 #define NEEDS_SAVE_INTERVAL_TICKS 5
-#define HEALTH_PER_STEP 0.50f
+#define ACTIVITY_POINTS_PER_STEP 0.50f
+#define THREE_X_DEVICE_COUNT 4
 
 static const char *TAG = "pet_state";
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -23,6 +24,7 @@ static uint16_t s_nearby_devices;
 static uint16_t s_cadence_spm;
 static uint32_t s_steps;
 static bool s_walking;
+static uint8_t s_social_multiplier = 1;
 static uint8_t s_last_saved_health;
 static uint8_t s_last_saved_social;
 static uint32_t s_last_saved_steps;
@@ -41,6 +43,14 @@ static float clamp_score(float value)
 static uint8_t rounded_score(float value)
 {
     return (uint8_t)(clamp_score(value) + 0.5f);
+}
+
+static uint8_t multiplier_for_devices(uint16_t device_count)
+{
+    if (device_count >= THREE_X_DEVICE_COUNT) {
+        return 3;
+    }
+    return device_count > 0 ? 2 : 1;
 }
 
 static void save_if_changed(void)
@@ -152,7 +162,8 @@ void pet_state_record_pedometer(uint8_t confirmed_steps, uint16_t cadence_spm,
     s_cadence_spm = walking ? cadence_spm : 0;
     if (confirmed_steps > 0) {
         s_steps += confirmed_steps;
-        s_health = clamp_score(s_health + (float)confirmed_steps * HEALTH_PER_STEP);
+        s_health = clamp_score(s_health + (float)confirmed_steps *
+                               ACTIVITY_POINTS_PER_STEP * (float)s_social_multiplier);
         const float cadence_level = clamp_score((float)cadence_spm * 100.0f / 130.0f) / 100.0f;
         if (cadence_level > s_activity_level) {
             s_activity_level = cadence_level;
@@ -170,9 +181,20 @@ void pet_state_record_pedometer(uint8_t confirmed_steps, uint16_t cadence_spm,
 
 void pet_state_set_nearby_devices(uint16_t device_count)
 {
+    uint8_t previous_multiplier;
+    uint8_t multiplier;
+
     portENTER_CRITICAL(&s_lock);
+    previous_multiplier = s_social_multiplier;
     s_nearby_devices = device_count;
+    multiplier = multiplier_for_devices(device_count);
+    s_social_multiplier = multiplier;
     portEXIT_CRITICAL(&s_lock);
+
+    if (multiplier != previous_multiplier) {
+        ESP_LOGI(TAG, "Social multiplier: %ux (%u nearby devices)",
+                 multiplier, device_count);
+    }
 }
 
 pet_state_snapshot_t pet_state_snapshot(void)
@@ -184,6 +206,7 @@ pet_state_snapshot_t pet_state_snapshot(void)
     snapshot.nearby_devices = s_nearby_devices;
     snapshot.cadence_spm = s_cadence_spm;
     snapshot.steps = s_steps;
+    snapshot.social_multiplier = s_social_multiplier;
     snapshot.activity_level = s_activity_level;
     snapshot.walking = s_walking;
     portEXIT_CRITICAL(&s_lock);
