@@ -16,12 +16,13 @@
 
 #define MAX_TRACKED_DEVICES 64
 #define DEVICE_RETENTION_MS (45 * 1000)
-#define MAINTENANCE_PERIOD_MS 15000
+#define MAINTENANCE_PERIOD_MS 1000
 #define MINIMUM_RSSI_DBM (-58)
 #define MINIMUM_SIGHTINGS 3
 #define MINIMUM_PRESENCE_MS 5000
+#define SCAN_CYCLE_MS 2000
 #define SCAN_INTERVAL_UNITS 0x0100
-#define SCAN_WINDOW_UNITS 0x0030
+#define SCAN_WINDOW_UNITS 0x0020
 
 typedef struct {
     bool occupied;
@@ -75,7 +76,6 @@ static void remember_device(const ble_addr_t *address)
     size_t free_slot = MAX_TRACKED_DEVICES;
     size_t oldest_slot = 0;
     int64_t oldest_seen = INT64_MAX;
-    uint16_t count;
 
     portENTER_CRITICAL(&s_devices_lock);
     for (size_t i = 0; i < MAX_TRACKED_DEVICES; ++i) {
@@ -85,9 +85,7 @@ static void remember_device(const ble_addr_t *address)
             if (s_devices[i].sightings < UINT8_MAX) {
                 ++s_devices[i].sightings;
             }
-            count = count_active_devices_locked(time_ms);
             portEXIT_CRITICAL(&s_devices_lock);
-            publish_count_if_changed(count);
             return;
         }
         if (!s_devices[i].occupied && free_slot == MAX_TRACKED_DEVICES) {
@@ -105,9 +103,7 @@ static void remember_device(const ble_addr_t *address)
     s_devices[slot].sightings = 1;
     s_devices[slot].first_seen_ms = time_ms;
     s_devices[slot].last_seen_ms = time_ms;
-    count = count_active_devices_locked(time_ms);
     portEXIT_CRITICAL(&s_devices_lock);
-    publish_count_if_changed(count);
 }
 
 static int gap_event(struct ble_gap_event *event, void *arg);
@@ -127,9 +123,9 @@ static void start_scan(void)
         .filter_policy = 0,
         .limited = 0,
         .passive = 1,
-        .filter_duplicates = 0,
+        .filter_duplicates = 1,
     };
-    rc = ble_gap_disc(own_address_type, BLE_HS_FOREVER, &params, gap_event, NULL);
+    rc = ble_gap_disc(own_address_type, SCAN_CYCLE_MS, &params, gap_event, NULL);
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         ESP_LOGE(TAG, "Could not start BLE discovery: %d", rc);
     }

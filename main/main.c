@@ -73,7 +73,6 @@ static const char *TAG = "tamadupi";
 typedef struct {
     bool sensor_online;
     float roll_deg;
-    float movement;
     uint32_t shake_generation;
 } motion_state_t;
 
@@ -1061,12 +1060,12 @@ static void publish_motion(const qmi8658_data_t *data)
     const float accel_magnitude = sqrtf(data->accelX * data->accelX +
                                         data->accelY * data->accelY +
                                         data->accelZ * data->accelZ);
-    const float gyro_magnitude = sqrtf(data->gyroX * data->gyroX +
-                                       data->gyroY * data->gyroY +
-                                       data->gyroZ * data->gyroZ);
-    const float movement = fabsf(accel_magnitude - GRAVITY_MPS2) + gyro_magnitude * 0.012f;
+    const float gyro_magnitude_squared = data->gyroX * data->gyroX +
+                                         data->gyroY * data->gyroY +
+                                         data->gyroZ * data->gyroZ;
     const bool shake = fabsf(accel_magnitude - GRAVITY_MPS2) > SHAKE_ACCEL_THRESHOLD ||
-                       gyro_magnitude > SHAKE_GYRO_THRESHOLD_DPS;
+                       gyro_magnitude_squared >
+                       SHAKE_GYRO_THRESHOLD_DPS * SHAKE_GYRO_THRESHOLD_DPS;
     const int64_t time_ms = now_ms();
     const step_tracker_result_t pedometer = step_tracker_update(&step_tracker,
                                                                  accel_magnitude,
@@ -1077,7 +1076,6 @@ static void publish_motion(const qmi8658_data_t *data)
     portENTER_CRITICAL(&s_motion_lock);
     s_motion.sensor_online = true;
     s_motion.roll_deg = filtered_roll;
-    s_motion.movement = s_motion.movement * 0.72f + movement * 0.28f;
     if (shake && (time_ms - last_shake_ms) > SHAKE_COOLDOWN_MS) {
         ++s_motion.shake_generation;
         last_shake_ms = time_ms;
