@@ -36,18 +36,20 @@ credentials must stay in `main/secrets.h`, which is ignored by Git.
 The AMOLED shows a small animated character:
 
 - Tilt the board left and right to make Mochi lean and look around.
-- Walking with Tamadupi counts steps and raises the single overall score. Mochi
+- Walking with Tamadupi counts steps and raises the activity score. Mochi
   dances during a walk and celebrates visible score gains with a flip. The first
   three cadence-consistent impacts confirm a walk, which filters out tilting,
   isolated bumps, and fast shaking.
 - Give the board a gentle shake to trigger Mochi's surprised expression.
-- Nearby BLE advertisers contribute to the same overall score. Addresses are
-  kept only in RAM, are never logged, and expire after ten minutes.
+- Close BLE advertisers set the live social reward multiplier: `1x` with none,
+  `2x` with 1-3, and `3x` with 4 or more. A device must remain close for five
+  seconds to qualify. Addresses are kept only in RAM, are never logged, and
+  expire after 45 seconds.
 - The text-free outdoor scene follows the local solar day: bright grass and sky
   during the day, warm dawn and sunset transitions, then moonlight, stars, and
   fireflies at night. Clouds, rain, snow, and storms layer over it.
-- Movement and social progress survive reboots. Low scores give Mochi tired or lonely
-  expressions and hints about what it needs.
+- Activity progress survives reboots; the multiplier is recalculated from live
+  nearby presence. Low scores give Mochi tired or lonely expressions.
 - Leave it still and Mochi breathes and blinks.
 
 The small status light reports connectivity and sensor health. If Mochi stops
