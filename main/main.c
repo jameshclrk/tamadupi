@@ -77,7 +77,10 @@ typedef struct {
     lv_obj_t *status_dot;
     lv_obj_t *status_label;
     lv_obj_t *hint_label;
-    lv_obj_t *motion_bar;
+    lv_obj_t *health_bar;
+    lv_obj_t *social_bar;
+    lv_obj_t *health_value_label;
+    lv_obj_t *social_value_label;
     lv_obj_t *sparkles[4];
     uint32_t seen_shake_generation;
     int64_t surprised_until_ms;
@@ -88,7 +91,8 @@ typedef struct {
     int32_t displayed_gaze_x;
     int32_t displayed_character_x;
     int32_t displayed_character_y;
-    int32_t displayed_motion_width;
+    int32_t displayed_health;
+    int32_t displayed_social;
     int32_t displayed_compression;
     int displayed_deform_expression;
     float physics_x;
@@ -238,17 +242,45 @@ static void create_character(lv_obj_t *screen)
 
 static void create_footer(lv_obj_t *screen)
 {
-    lv_obj_t *card = make_shape(screen, 20, 370, 328, 58, COLOR_PANEL, 18);
+    s_ui.hint_label = lv_label_create(screen);
+    lv_label_set_text(s_ui.hint_label, "Move me side to side!");
+    lv_obj_set_pos(s_ui.hint_label, 20, 340);
+    lv_obj_set_width(s_ui.hint_label, 328);
+    lv_obj_set_style_text_align(s_ui.hint_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.hint_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+
+    lv_obj_t *card = make_shape(screen, 20, 363, 328, 72, COLOR_PANEL, 18);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
 
-    s_ui.hint_label = lv_label_create(card);
-    lv_label_set_text(s_ui.hint_label, "Move me side to side!");
-    lv_obj_set_pos(s_ui.hint_label, 18, 11);
-    lv_obj_set_style_text_color(s_ui.hint_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_t *health_label = lv_label_create(card);
+    lv_label_set_text(health_label, "HEALTH");
+    lv_obj_set_pos(health_label, 17, 10);
+    lv_obj_set_style_text_color(health_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
 
-    lv_obj_t *track = make_shape(card, 18, 38, 292, 6, 0x30385F, 3);
-    s_ui.motion_bar = make_shape(track, 0, 0, 12, 6, COLOR_MINT, 3);
+    s_ui.health_value_label = lv_label_create(card);
+    lv_label_set_text(s_ui.health_value_label, "--");
+    lv_obj_set_pos(s_ui.health_value_label, 119, 9);
+    lv_obj_set_width(s_ui.health_value_label, 32);
+    lv_obj_set_style_text_align(s_ui.health_value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.health_value_label, lv_color_hex(COLOR_MINT), LV_PART_MAIN);
+
+    lv_obj_t *social_label = lv_label_create(card);
+    lv_label_set_text(social_label, "SOCIAL");
+    lv_obj_set_pos(social_label, 177, 10);
+    lv_obj_set_style_text_color(social_label, lv_color_hex(COLOR_MUTED), LV_PART_MAIN);
+
+    s_ui.social_value_label = lv_label_create(card);
+    lv_label_set_text(s_ui.social_value_label, "--");
+    lv_obj_set_pos(s_ui.social_value_label, 279, 9);
+    lv_obj_set_width(s_ui.social_value_label, 32);
+    lv_obj_set_style_text_align(s_ui.social_value_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.social_value_label, lv_color_hex(COLOR_CHEEK), LV_PART_MAIN);
+
+    lv_obj_t *health_track = make_shape(card, 17, 40, 134, 10, 0x30385F, 5);
+    s_ui.health_bar = make_shape(health_track, 0, 0, 1, 10, COLOR_MINT, 5);
+    lv_obj_t *social_track = make_shape(card, 177, 40, 134, 10, 0x30385F, 5);
+    s_ui.social_bar = make_shape(social_track, 0, 0, 1, 10, COLOR_CHEEK, 5);
 }
 
 static motion_state_t motion_snapshot(void)
@@ -360,6 +392,7 @@ static void buddy_update(lv_timer_t *timer)
 {
     (void)timer;
     const motion_state_t motion = motion_snapshot();
+    const pet_state_snapshot_t needs = pet_state_snapshot();
     const int64_t time_ms = now_ms();
 
     if (motion.shake_generation != s_ui.seen_shake_generation) {
@@ -420,10 +453,20 @@ static void buddy_update(lv_timer_t *timer)
 
     deform_buddy(squish, expression);
 
-    const int32_t width = 12 + (int32_t)clampf(motion.movement * 38.0f, 0.0f, 280.0f);
-    if (width != s_ui.displayed_motion_width) {
-        lv_obj_set_width(s_ui.motion_bar, width);
-        s_ui.displayed_motion_width = width;
+    if (needs.health != s_ui.displayed_health) {
+        char value[4];
+        lv_snprintf(value, sizeof(value), "%u", needs.health);
+        lv_label_set_text(s_ui.health_value_label, value);
+        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 133 / 100);
+        s_ui.displayed_health = needs.health;
+    }
+
+    if (needs.social != s_ui.displayed_social) {
+        char value[4];
+        lv_snprintf(value, sizeof(value), "%u", needs.social);
+        lv_label_set_text(s_ui.social_value_label, value);
+        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 133 / 100);
+        s_ui.displayed_social = needs.social;
     }
 
     if (!s_ui.status_initialized || motion.sensor_online != s_ui.displayed_sensor_online) {
@@ -451,7 +494,8 @@ static void create_buddy_ui(void)
     s_ui.displayed_gaze_x = INT32_MIN;
     s_ui.displayed_character_x = INT32_MIN;
     s_ui.displayed_character_y = INT32_MIN;
-    s_ui.displayed_motion_width = INT32_MIN;
+    s_ui.displayed_health = INT32_MIN;
+    s_ui.displayed_social = INT32_MIN;
     s_ui.displayed_compression = INT32_MIN;
     s_ui.displayed_deform_expression = -1;
     lv_timer_create(buddy_update, 66, NULL);
