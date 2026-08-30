@@ -27,8 +27,8 @@ idf.py -p /dev/cu.usbmodem2101 flash monitor
 
 Use a different serial port if the board appears under another device name.
 
-Weather data comes from Open-Meteo and refreshes every 30 minutes. The header
-shows `Wi-Fi setup` until `main/secrets.h` contains a network name. Real
+Weather data comes from Open-Meteo and refreshes every 30 minutes. The forecast
+also supplies local sunrise and sunset times for the outdoor scene. Real
 credentials must stay in `main/secrets.h`, which is ignored by Git.
 
 ## Expected Result
@@ -43,14 +43,15 @@ The AMOLED shows a small animated character:
 - Give the board a gentle shake to trigger Mochi's surprised expression.
 - Nearby BLE advertisers raise Social over time. Addresses are kept only in RAM,
   are never logged, and expire after ten minutes.
-- Current temperature and conditions appear in the header. Sun, clouds, rain,
-  snow, and storms change the scene and Mochi's mood.
+- The text-free outdoor scene follows the local solar day: bright grass and sky
+  during the day, warm dawn and sunset transitions, then moonlight, stars, and
+  fireflies at night. Clouds, rain, snow, and storms layer over it.
 - Health and Social survive reboots. Low scores give Mochi tired or lonely
   expressions and hints about what it needs.
 - Leave it still and Mochi breathes and blinks.
 
-The status pill normally reports weather state. If it shows `no IMU`, check the
-serial monitor for the I2C or QMI8658 error.
+The small status light reports connectivity and sensor health. If Mochi stops
+responding to motion, check the serial monitor for the I2C or QMI8658 error.
 
 ## Tuning
 
