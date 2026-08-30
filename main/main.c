@@ -11,6 +11,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "nvs_flash.h"
+#include "pet_state.h"
 
 // The QMI8658 header defines M_PI unconditionally, so avoid colliding with newlib's definition.
 #ifdef M_PI
@@ -556,11 +558,20 @@ static void publish_motion(const qmi8658_data_t *data)
         last_shake_ms = time_ms;
     }
     portEXIT_CRITICAL(&s_motion_lock);
+    pet_state_record_activity(movement, (float)IMU_SAMPLE_PERIOD_MS / 1000.0f);
 }
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "Starting Tamadupi");
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(pet_state_init());
 
     lv_display_t *display = bsp_display_start();
     if (display == NULL) {
@@ -577,7 +588,7 @@ void app_main(void)
     bsp_display_unlock();
 
     qmi8658_dev_t imu = {0};
-    esp_err_t ret = start_imu(&imu);
+    ret = start_imu(&imu);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "IMU initialization failed: %s", esp_err_to_name(ret));
         while (true) {
