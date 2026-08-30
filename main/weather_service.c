@@ -10,6 +10,7 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -54,13 +55,19 @@ static void set_weather_status(weather_status_t status)
     portEXIT_CRITICAL(&s_weather_lock);
 }
 
-static void publish_weather(float temperature_c, int weather_code, bool is_day)
+static void publish_weather(float temperature_c, int weather_code, bool is_day,
+                            int64_t current_time_unix, int64_t sunrise_unix,
+                            int64_t sunset_unix)
 {
     portENTER_CRITICAL(&s_weather_lock);
     s_weather.status = WEATHER_STATUS_READY;
     s_weather.temperature_c = temperature_c;
     s_weather.weather_code = weather_code;
     s_weather.is_day = is_day;
+    s_weather.current_time_unix = current_time_unix;
+    s_weather.sunrise_unix = sunrise_unix;
+    s_weather.sunset_unix = sunset_unix;
+    s_weather.observed_at_ms = esp_timer_get_time() / 1000;
     ++s_weather.generation;
     portEXIT_CRITICAL(&s_weather_lock);
 }
@@ -106,7 +113,8 @@ static esp_err_t fetch_weather(void)
     char url[320];
     snprintf(url, sizeof(url),
              "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
-             "&current=temperature_2m,weather_code,is_day&timezone=auto",
+             "&current=temperature_2m,weather_code,is_day"
+             "&daily=sunrise,sunset&forecast_days=1&timeformat=unixtime&timezone=auto",
              (double)TAMADUPI_LATITUDE, (double)TAMADUPI_LONGITUDE);
 
     http_response_t response = {0};
@@ -139,7 +147,18 @@ static esp_err_t fetch_weather(void)
                   cJSON_GetObjectItemCaseSensitive(current, "weather_code");
     cJSON *day = current == NULL ? NULL :
                  cJSON_GetObjectItemCaseSensitive(current, "is_day");
-    if (!cJSON_IsNumber(temperature) || !cJSON_IsNumber(code) || !cJSON_IsNumber(day)) {
+    cJSON *current_time = current == NULL ? NULL :
+                          cJSON_GetObjectItemCaseSensitive(current, "time");
+    cJSON *daily = root == NULL ? NULL : cJSON_GetObjectItemCaseSensitive(root, "daily");
+    cJSON *sunrise_array = daily == NULL ? NULL :
+                            cJSON_GetObjectItemCaseSensitive(daily, "sunrise");
+    cJSON *sunset_array = daily == NULL ? NULL :
+                           cJSON_GetObjectItemCaseSensitive(daily, "sunset");
+    cJSON *sunrise = cJSON_IsArray(sunrise_array) ? cJSON_GetArrayItem(sunrise_array, 0) : NULL;
+    cJSON *sunset = cJSON_IsArray(sunset_array) ? cJSON_GetArrayItem(sunset_array, 0) : NULL;
+    if (!cJSON_IsNumber(temperature) || !cJSON_IsNumber(code) || !cJSON_IsNumber(day) ||
+        !cJSON_IsNumber(current_time) || !cJSON_IsNumber(sunrise) ||
+        !cJSON_IsNumber(sunset)) {
         cJSON_Delete(root);
         ESP_LOGW(TAG, "Weather response did not contain current conditions");
         return ESP_ERR_INVALID_RESPONSE;
@@ -148,10 +167,15 @@ static esp_err_t fetch_weather(void)
     const float temperature_c = (float)temperature->valuedouble;
     const int weather_code = code->valueint;
     const bool is_day = day->valueint != 0;
-    ESP_LOGI(TAG, "Weather updated: %.1f C, code %d",
-             temperature->valuedouble, code->valueint);
+    const int64_t current_time_unix = (int64_t)current_time->valuedouble;
+    const int64_t sunrise_unix = (int64_t)sunrise->valuedouble;
+    const int64_t sunset_unix = (int64_t)sunset->valuedouble;
+    ESP_LOGI(TAG, "Weather updated: %.1f C, code %d, daylight %lld..%lld",
+             temperature->valuedouble, code->valueint,
+             (long long)sunrise_unix, (long long)sunset_unix);
     cJSON_Delete(root);
-    publish_weather(temperature_c, weather_code, is_day);
+    publish_weather(temperature_c, weather_code, is_day, current_time_unix,
+                    sunrise_unix, sunset_unix);
     return ESP_OK;
 }
 
