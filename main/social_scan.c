@@ -57,7 +57,9 @@ static void publish_count_if_changed(uint16_t count)
     }
     s_published_count = count;
     pet_state_set_nearby_devices(count);
-    ESP_LOGI(TAG, "%u nearby BLE device%s", count, count == 1 ? "" : "s");
+    if (count == 0 || count == 1 || (count % 8) == 0) {
+        ESP_LOGI(TAG, "%u nearby BLE device%s", count, count == 1 ? "" : "s");
+    }
 }
 
 static void remember_device(const ble_addr_t *address)

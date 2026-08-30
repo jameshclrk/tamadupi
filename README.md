@@ -22,10 +22,14 @@ Edit `main/secrets.h` with the fixed Wi-Fi credentials and location. This file i
 ```bash
 idf.py set-target esp32s3
 idf.py build
-idf.py -p PORT flash monitor
+idf.py -p /dev/cu.usbmodem2101 flash monitor
 ```
 
-Replace `PORT` with the serial port for the board.
+Use a different serial port if the board appears under another device name.
+
+Weather data comes from Open-Meteo and refreshes every 30 minutes. The header
+shows `Wi-Fi setup` until `main/secrets.h` contains a network name. Real
+credentials must stay in `main/secrets.h`, which is ignored by Git.
 
 ## Expected Result
 
@@ -33,12 +37,21 @@ The AMOLED shows a small animated character:
 
 - Tilt the board left and right to make Mochi lean and look around.
 - Move the board side to side to slide Mochi around; Mochi squishes on impact with the screen edges.
-- General movement makes Mochi bounce and fills the motion meter.
+- General movement makes Mochi bounce and gradually improves Health.
 - Give the board a gentle shake to trigger Mochi's surprised expression.
+- Nearby BLE advertisers raise Social over time. Addresses are kept only in RAM,
+  are never logged, and expire after ten minutes.
+- Current temperature and conditions appear in the header. Sun, clouds, rain,
+  snow, and storms change the scene and Mochi's mood.
+- Health and Social survive reboots. Low scores give Mochi tired or lonely
+  expressions and hints about what it needs.
 - Leave it still and Mochi breathes and blinks.
 
-The status pill reports `IMU live` when the sensor is connected. If it shows `no IMU`, check the serial monitor for the I2C or QMI8658 error.
+The status pill normally reports weather state. If it shows `no IMU`, check the
+serial monitor for the I2C or QMI8658 error.
 
 ## Tuning
 
-Motion thresholds, sampling rate, and UI colors are grouped near the top of `main/main.c` for quick experimentation. Never put real credentials in `secrets.example.h`.
+Motion thresholds, sampling rate, and UI colors are grouped near the top of
+`main/main.c` for quick experimentation. Never put real credentials in
+`secrets.example.h`.
