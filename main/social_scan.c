@@ -15,10 +15,11 @@
 #include "pet_state.h"
 
 #define MAX_TRACKED_DEVICES 64
-#define DEVICE_RETENTION_MS (90 * 1000)
-#define MAINTENANCE_PERIOD_MS 30000
-#define MINIMUM_RSSI_DBM (-70)
+#define DEVICE_RETENTION_MS (45 * 1000)
+#define MAINTENANCE_PERIOD_MS 15000
+#define MINIMUM_RSSI_DBM (-58)
 #define MINIMUM_SIGHTINGS 3
+#define MINIMUM_PRESENCE_MS 5000
 #define SCAN_INTERVAL_UNITS 0x0100
 #define SCAN_WINDOW_UNITS 0x0030
 
@@ -27,6 +28,7 @@ typedef struct {
     uint8_t address_type;
     uint8_t address[6];
     uint8_t sightings;
+    int64_t first_seen_ms;
     int64_t last_seen_ms;
 } tracked_device_t;
 
@@ -46,6 +48,8 @@ static uint16_t count_active_devices_locked(int64_t time_ms)
     for (size_t i = 0; i < MAX_TRACKED_DEVICES; ++i) {
         if (s_devices[i].occupied &&
             s_devices[i].sightings >= MINIMUM_SIGHTINGS &&
+            s_devices[i].last_seen_ms - s_devices[i].first_seen_ms >=
+                MINIMUM_PRESENCE_MS &&
             time_ms - s_devices[i].last_seen_ms <= DEVICE_RETENTION_MS) {
             ++count;
         }
@@ -99,6 +103,7 @@ static void remember_device(const ble_addr_t *address)
     s_devices[slot].address_type = address->type;
     memcpy(s_devices[slot].address, address->val, sizeof(address->val));
     s_devices[slot].sightings = 1;
+    s_devices[slot].first_seen_ms = time_ms;
     s_devices[slot].last_seen_ms = time_ms;
     count = count_active_devices_locked(time_ms);
     portEXIT_CRITICAL(&s_devices_lock);
