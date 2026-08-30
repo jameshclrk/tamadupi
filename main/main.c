@@ -37,12 +37,6 @@
 #define SHAKE_COOLDOWN_MS 650
 #define BUDDY_PI 3.14159265358979323846f
 
-#define BUDDY_TRAVEL_LIMIT_PX 99.0f
-#define BUDDY_ACCEL_FORCE 850.0f
-#define BUDDY_CENTERING_SPRING 2.0f
-#define BUDDY_MOTION_DAMPING 2.2f
-#define BUDDY_WALL_BOUNCE 0.24f
-#define BUDDY_MAX_SQUISH_PX 28.0f
 #define BUDDY_BODY_X 30
 #define BUDDY_BODY_Y 50
 #define BUDDY_BODY_WIDTH 170
@@ -76,7 +70,6 @@ typedef struct {
     bool sensor_online;
     float roll_deg;
     float movement;
-    float lateral_accel;
     uint32_t shake_generation;
 } motion_state_t;
 
@@ -104,7 +97,7 @@ typedef struct {
     lv_obj_t *social_bar;
     lv_obj_t *health_icon;
     lv_obj_t *social_icon;
-    lv_obj_t *footprints[4];
+    lv_obj_t *score_pips[4];
     lv_obj_t *weather_clouds[3];
     lv_obj_t *weather_particles[7];
     lv_obj_t *scene_horizon;
@@ -131,21 +124,18 @@ typedef struct {
     int32_t displayed_health;
     int32_t displayed_social;
     int32_t displayed_nearby_devices;
-    int32_t displayed_compression;
-    int displayed_deform_expression;
     int64_t displayed_scene_minute;
     int displayed_scene_weather_kind;
-    float physics_x;
-    float physics_velocity;
-    float squish;
-    int wall_side;
-    int64_t last_physics_ms;
+    uint32_t displayed_steps;
+    int64_t celebration_started_ms;
+    int64_t celebration_until_ms;
 } buddy_ui_t;
 
 typedef enum {
     BUDDY_EXPRESSION_IDLE,
     BUDDY_EXPRESSION_TILT,
     BUDDY_EXPRESSION_SURPRISED,
+    BUDDY_EXPRESSION_HAPPY,
     BUDDY_EXPRESSION_TIRED,
     BUDDY_EXPRESSION_LONELY,
 } buddy_expression_t;
@@ -461,6 +451,8 @@ static void create_character(lv_obj_t *screen)
     lv_obj_set_style_bg_opa(s_ui.character, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_ui.character, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.character, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_x(s_ui.character, 115, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_ui.character, 140, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.character, LV_OBJ_FLAG_SCROLLABLE);
     make_shape(s_ui.character, 184, 132, 35, 35, COLOR_PEACH_LIGHT, LV_RADIUS_CIRCLE);
     s_ui.left_ear = make_shape(s_ui.character, 42, 15, 66, 82,
@@ -526,26 +518,28 @@ static void create_footer(lv_obj_t *screen)
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, lv_color_hex(COLOR_PANEL_EDGE), LV_PART_MAIN);
 
-    s_ui.health_icon = make_heart(card, 14, 16, COLOR_MINT);
-    lv_obj_t *health_track = make_shape(card, 49, 23, 91, 12, 0x30385F, 6);
+    s_ui.health_icon = make_heart(card, 12, 16, COLOR_MINT);
+    make_shape(s_ui.health_icon, 9, 11, 8, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.health_icon, 6, 8, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
+    make_shape(s_ui.health_icon, 16, 7, 5, 5, COLOR_STAR, LV_RADIUS_CIRCLE);
+    lv_obj_t *health_track = make_shape(card, 47, 21, 157, 16, 0x30385F, 8);
     s_ui.health_bar = make_shape(health_track, 0, 0, 1, 12, COLOR_MINT, 6);
+    lv_obj_set_height(s_ui.health_bar, 16);
 
-    s_ui.social_icon = make_shape(card, 181, 15, 28, 28, COLOR_CHEEK,
+    for (size_t i = 0; i < 4; ++i) {
+        s_ui.score_pips[i] = make_shape(health_track, 34 + (int32_t)i * 30, 5,
+                                       6, 6, COLOR_CREAM, LV_RADIUS_CIRCLE);
+        lv_obj_set_style_opa(s_ui.score_pips[i], LV_OPA_30, LV_PART_MAIN);
+    }
+
+    s_ui.social_icon = make_shape(card, 215, 15, 28, 28, COLOR_CHEEK,
                                   LV_RADIUS_CIRCLE);
     lv_obj_set_style_bg_opa(s_ui.social_icon, LV_OPA_TRANSP, LV_PART_MAIN);
     make_shape(s_ui.social_icon, 1, 3, 12, 12, COLOR_CHEEK, LV_RADIUS_CIRCLE);
     make_shape(s_ui.social_icon, 15, 3, 12, 12, COLOR_LILAC, LV_RADIUS_CIRCLE);
     make_shape(s_ui.social_icon, 7, 15, 14, 11, COLOR_CHEEK, LV_RADIUS_CIRCLE);
-    lv_obj_t *social_track = make_shape(card, 218, 23, 91, 12, 0x30385F, 6);
+    lv_obj_t *social_track = make_shape(card, 251, 23, 60, 12, 0x30385F, 6);
     s_ui.social_bar = make_shape(social_track, 0, 0, 1, 12, COLOR_CHEEK, 6);
-
-    const int16_t footprint_x[4] = {147, 155, 163, 171};
-    for (size_t i = 0; i < 4; ++i) {
-        s_ui.footprints[i] = make_shape(card, footprint_x[i],
-                                        (i % 2) == 0 ? 16 : 31,
-                                        7, 11, COLOR_STAR, LV_RADIUS_CIRCLE);
-        lv_obj_set_style_opa(s_ui.footprints[i], LV_OPA_20, LV_PART_MAIN);
-    }
 }
 
 static motion_state_t motion_snapshot(void)
@@ -560,18 +554,19 @@ static motion_state_t motion_snapshot(void)
 static void set_eye_expression(bool blink, buddy_expression_t expression, int32_t gaze_x)
 {
     const bool surprised = expression == BUDDY_EXPRESSION_SURPRISED;
+    const bool happy = expression == BUDDY_EXPRESSION_HAPPY;
     const bool tired = expression == BUDDY_EXPRESSION_TIRED;
-    const int32_t eye_height = surprised ? 49 : (blink ? 5 : (tired ? 23 : 45));
-    const int32_t eye_y = surprised ? 56 : (blink ? 80 : (tired ? 70 : 60));
+    const int32_t eye_height = surprised ? 49 : (blink ? 5 : (happy ? 18 : (tired ? 23 : 45)));
+    const int32_t eye_y = surprised ? 56 : (blink ? 80 : (happy ? 72 : (tired ? 70 : 60)));
 
     lv_obj_set_y(s_ui.left_eye, eye_y);
     lv_obj_set_y(s_ui.right_eye, eye_y);
     lv_obj_set_height(s_ui.left_eye, eye_height);
     lv_obj_set_height(s_ui.right_eye, eye_height);
-    lv_obj_set_y(s_ui.left_brow, surprised ? 43 : (tired ? 62 : 51));
-    lv_obj_set_y(s_ui.right_brow, surprised ? 43 : (tired ? 62 : 51));
+    lv_obj_set_y(s_ui.left_brow, surprised ? 43 : (happy ? 49 : (tired ? 62 : 51)));
+    lv_obj_set_y(s_ui.right_brow, surprised ? 43 : (happy ? 49 : (tired ? 62 : 51)));
 
-    const lv_opa_t pupil_opa = blink ? LV_OPA_TRANSP : LV_OPA_COVER;
+    const lv_opa_t pupil_opa = blink || happy ? LV_OPA_TRANSP : LV_OPA_COVER;
     lv_obj_set_style_opa(s_ui.left_pupil, pupil_opa, LV_PART_MAIN);
     lv_obj_set_style_opa(s_ui.right_pupil, pupil_opa, LV_PART_MAIN);
     lv_obj_set_x(s_ui.left_pupil, 12 + gaze_x);
@@ -701,89 +696,6 @@ static uint32_t buddy_body_color(buddy_expression_t expression, weather_kind_t w
     return expression == BUDDY_EXPRESSION_SURPRISED ? COLOR_PEACH_LIGHT : COLOR_PEACH;
 }
 
-static float update_buddy_physics(const motion_state_t *motion, int64_t time_ms)
-{
-    if (s_ui.last_physics_ms == 0) {
-        s_ui.last_physics_ms = time_ms;
-        return 0.0f;
-    }
-
-    const float dt = clampf((float)(time_ms - s_ui.last_physics_ms) / 1000.0f, 0.01f, 0.12f);
-    s_ui.last_physics_ms = time_ms;
-
-    const float force = -motion->lateral_accel * BUDDY_ACCEL_FORCE;
-    const float acceleration = force - s_ui.physics_x * BUDDY_CENTERING_SPRING -
-                               s_ui.physics_velocity * BUDDY_MOTION_DAMPING;
-    s_ui.physics_velocity += acceleration * dt;
-    s_ui.physics_velocity = clampf(s_ui.physics_velocity, -620.0f, 620.0f);
-    s_ui.physics_x += s_ui.physics_velocity * dt;
-
-    float squish_target = 0.0f;
-    if (s_ui.physics_x <= -BUDDY_TRAVEL_LIMIT_PX) {
-        const float impact_speed = fabsf(s_ui.physics_velocity);
-        s_ui.physics_x = -BUDDY_TRAVEL_LIMIT_PX;
-        s_ui.wall_side = -1;
-        if (s_ui.physics_velocity < 0.0f) {
-            s_ui.physics_velocity *= -BUDDY_WALL_BOUNCE;
-        }
-        squish_target = clampf(impact_speed / 420.0f + fmaxf(-force, 0.0f) / 2600.0f, 0.0f, 1.0f);
-    } else if (s_ui.physics_x >= BUDDY_TRAVEL_LIMIT_PX) {
-        const float impact_speed = fabsf(s_ui.physics_velocity);
-        s_ui.physics_x = BUDDY_TRAVEL_LIMIT_PX;
-        s_ui.wall_side = 1;
-        if (s_ui.physics_velocity > 0.0f) {
-            s_ui.physics_velocity *= -BUDDY_WALL_BOUNCE;
-        }
-        squish_target = clampf(impact_speed / 420.0f + fmaxf(force, 0.0f) / 2600.0f, 0.0f, 1.0f);
-    }
-
-    if (squish_target > s_ui.squish) {
-        s_ui.squish += (squish_target - s_ui.squish) * 0.72f;
-    } else {
-        s_ui.squish *= 0.74f;
-    }
-    if (s_ui.squish < 0.01f) {
-        s_ui.squish = 0.0f;
-        if (fabsf(s_ui.physics_x) < BUDDY_TRAVEL_LIMIT_PX - 2.0f) {
-            s_ui.wall_side = 0;
-        }
-    }
-    return s_ui.squish;
-}
-
-static void deform_buddy(float squish, buddy_expression_t expression)
-{
-    const int32_t compression = (int32_t)(squish * BUDDY_MAX_SQUISH_PX);
-    if (compression == s_ui.displayed_compression &&
-        expression == s_ui.displayed_deform_expression) {
-        return;
-    }
-
-    const int32_t body_width = BUDDY_BODY_WIDTH - compression;
-    const int32_t body_x = BUDDY_BODY_X + (s_ui.wall_side > 0 ? compression : 0);
-    const int32_t stretch = compression / 2;
-    const float scale_x = (float)body_width / (float)BUDDY_BODY_WIDTH;
-
-    lv_obj_set_pos(s_ui.body, body_x, BUDDY_BODY_Y - stretch / 2);
-    lv_obj_set_size(s_ui.body, body_width, BUDDY_BODY_HEIGHT + stretch);
-
-    lv_obj_set_x(s_ui.left_eye, (int32_t)(50.0f * scale_x) - 21);
-    lv_obj_set_x(s_ui.right_eye, (int32_t)(120.0f * scale_x) - 21);
-    lv_obj_set_x(s_ui.left_brow, (int32_t)(49.5f * scale_x) - 14);
-    lv_obj_set_x(s_ui.right_brow, (int32_t)(120.5f * scale_x) - 14);
-    lv_obj_set_x(s_ui.left_cheek, (int32_t)(31.5f * scale_x) - 18);
-    lv_obj_set_x(s_ui.right_cheek, (int32_t)(138.5f * scale_x) - 18);
-    lv_obj_set_x(s_ui.belly_glow, (int32_t)(53.0f * scale_x));
-    lv_obj_set_width(s_ui.belly_glow, (int32_t)(64.0f * scale_x));
-
-    const int32_t mouth_width = expression == BUDDY_EXPRESSION_SURPRISED ? 24 :
-                                (expression == BUDDY_EXPRESSION_TIRED ? 34 :
-                                 (expression == BUDDY_EXPRESSION_LONELY ? 28 : 30));
-    lv_obj_set_x(s_ui.mouth, body_width / 2 - mouth_width / 2);
-    s_ui.displayed_compression = compression;
-    s_ui.displayed_deform_expression = expression;
-}
-
 static void buddy_update(lv_timer_t *timer)
 {
     (void)timer;
@@ -809,23 +721,44 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.surprised_until_ms = time_ms + 850;
     }
 
+    if (s_ui.displayed_steps == UINT32_MAX) {
+        s_ui.displayed_steps = needs.steps;
+    } else if (needs.steps > s_ui.displayed_steps) {
+        if (s_ui.displayed_health != INT32_MIN && needs.health > s_ui.displayed_health) {
+            s_ui.celebration_started_ms = time_ms;
+            s_ui.celebration_until_ms = time_ms + 900;
+        }
+        s_ui.displayed_steps = needs.steps;
+    }
+
     const bool surprised = time_ms < s_ui.surprised_until_ms;
+    const bool celebrating = time_ms < s_ui.celebration_until_ms;
     const bool blink = !surprised && ((time_ms % 4300) > 4130);
     const float roll = clampf(motion.roll_deg, -28.0f, 28.0f);
-    const float squish = update_buddy_physics(&motion, time_ms);
     const float phase = (float)(time_ms % 1800) / 1800.0f;
     const int32_t weather_bounce = weather_kind == WEATHER_KIND_CLEAR ?
                                    (int32_t)(sinf(phase * 4.0f * BUDDY_PI) * 1.5f) : 0;
     const int32_t breathe = (int32_t)(sinf(phase * 2.0f * BUDDY_PI) * 2.0f) +
                             weather_bounce;
-    const int32_t movement_bob = (int32_t)clampf(motion.movement * 2.2f, 0.0f, 11.0f);
-    const int32_t character_x = 69 + (int32_t)s_ui.physics_x;
-    const int32_t character_y = 83 + breathe - movement_bob;
+    const float dance_wave = sinf((float)time_ms * 0.014f);
+    const int32_t dance_x = needs.walking ? (int32_t)(dance_wave * 6.0f) : 0;
+    const int32_t dance_jump = needs.walking ?
+                               (int32_t)(fabsf(dance_wave) * 9.0f) : 0;
+    float celebration_progress = 0.0f;
+    if (celebrating) {
+        celebration_progress = clampf((float)(time_ms - s_ui.celebration_started_ms) /
+                                      900.0f, 0.0f, 1.0f);
+    }
+    const int32_t flip_jump = celebrating ?
+                              (int32_t)(sinf(celebration_progress * BUDDY_PI) * 25.0f) : 0;
+    const int32_t character_x = 69 + dance_x;
+    const int32_t character_y = 83 + breathe - dance_jump - flip_jump;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
-        (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
-         (needs.health < 25 ? BUDDY_EXPRESSION_TIRED :
-          (needs.social < 25 ? BUDDY_EXPRESSION_LONELY : BUDDY_EXPRESSION_IDLE)));
+        (celebrating || needs.walking || needs.health >= 85 ? BUDDY_EXPRESSION_HAPPY :
+         (fabsf(roll) > 11.0f ? BUDDY_EXPRESSION_TILT :
+          (needs.health < 25 ? BUDDY_EXPRESSION_TIRED :
+           (needs.social < 25 ? BUDDY_EXPRESSION_LONELY : BUDDY_EXPRESSION_IDLE))));
     const bool expression_changed = expression != s_ui.displayed_expression;
     const bool needs_changed = needs.health != s_ui.displayed_health ||
                                needs.social != s_ui.displayed_social ||
@@ -841,19 +774,23 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_character_y = character_y;
     }
 
-    const float walk_wave = sinf((float)time_ms *
-                                  (needs.walking ? 0.012f : 0.0035f));
-    const int32_t appendage_bob = needs.walking ? (int32_t)(walk_wave * 4.0f) : 0;
+    const int32_t character_rotation = celebrating ?
+        (int32_t)(celebration_progress * 3600.0f) :
+        (needs.walking ? (int32_t)(dance_wave * 55.0f) : 0);
+    lv_obj_set_style_transform_rotation(s_ui.character, character_rotation, LV_PART_MAIN);
+
+    const int32_t appendage_bob = (needs.walking || celebrating) ?
+                                  (int32_t)(dance_wave * 8.0f) : 0;
     lv_obj_set_y(s_ui.left_ear, 15 - appendage_bob / 2);
     lv_obj_set_y(s_ui.right_ear, 15 + appendage_bob / 2);
     lv_obj_set_y(s_ui.left_arm, 131 + appendage_bob);
     lv_obj_set_y(s_ui.right_arm, 131 - appendage_bob);
     lv_obj_set_y(s_ui.left_foot, 193 - appendage_bob);
     lv_obj_set_y(s_ui.right_foot, 193 + appendage_bob);
-    const size_t bright_footprint = (size_t)((time_ms / 140) % 4);
+    const size_t bright_pip = (size_t)((time_ms / 140) % 4);
     for (size_t i = 0; i < 4; ++i) {
-        lv_obj_set_style_opa(s_ui.footprints[i],
-                             needs.walking && i == bright_footprint ? LV_OPA_COVER : LV_OPA_20,
+        lv_obj_set_style_opa(s_ui.score_pips[i],
+                             needs.walking && i == bright_pip ? LV_OPA_COVER : LV_OPA_30,
                              LV_PART_MAIN);
     }
 
@@ -869,6 +806,10 @@ static void buddy_update(lv_timer_t *timer)
             lv_obj_set_pos(s_ui.mouth, 73, 113);
             lv_obj_set_size(s_ui.mouth, 24, 29);
             lv_obj_set_style_radius(s_ui.mouth, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        } else if (expression == BUDDY_EXPRESSION_HAPPY) {
+            lv_obj_set_pos(s_ui.mouth, 62, 110);
+            lv_obj_set_size(s_ui.mouth, 46, 27);
+            lv_obj_set_style_radius(s_ui.mouth, 14, LV_PART_MAIN);
         } else if (expression == BUDDY_EXPRESSION_TIRED) {
             lv_obj_set_pos(s_ui.mouth, 68, 126);
             lv_obj_set_size(s_ui.mouth, 34, 6);
@@ -896,7 +837,8 @@ static void buddy_update(lv_timer_t *timer)
         lv_obj_set_style_bg_opa(s_ui.right_cheek,
                                 expression == BUDDY_EXPRESSION_LONELY ? LV_OPA_30 : LV_OPA_70,
                                 LV_PART_MAIN);
-        const lv_opa_t sparkle_opa = surprised || needs.social >= 75 ?
+        const lv_opa_t sparkle_opa = surprised || expression == BUDDY_EXPRESSION_HAPPY ||
+                                     needs.social >= 75 ?
                                      LV_OPA_COVER : LV_OPA_30;
         for (size_t i = 0; i < 4; ++i) {
             lv_obj_set_style_opa(s_ui.sparkles[i], sparkle_opa, LV_PART_MAIN);
@@ -905,18 +847,19 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_nearby_devices = needs.nearby_devices;
     }
 
-    deform_buddy(squish, expression);
-
     if (needs.health != s_ui.displayed_health) {
-        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 90 / 100);
+        lv_obj_set_width(s_ui.health_bar, 1 + needs.health * 156 / 100);
         lv_obj_set_style_opa(s_ui.health_icon,
                              needs.health < 25 ? LV_OPA_40 : LV_OPA_COVER,
                              LV_PART_MAIN);
         s_ui.displayed_health = needs.health;
     }
+    lv_obj_set_style_bg_color(s_ui.health_bar,
+                              lv_color_hex(needs.walking || celebrating ? COLOR_STAR : COLOR_MINT),
+                              LV_PART_MAIN);
 
     if (needs.social != s_ui.displayed_social) {
-        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 90 / 100);
+        lv_obj_set_width(s_ui.social_bar, 1 + needs.social * 59 / 100);
         lv_obj_set_style_opa(s_ui.social_icon,
                              needs.social < 25 ? LV_OPA_40 : LV_OPA_COVER,
                              LV_PART_MAIN);
@@ -968,10 +911,9 @@ static void create_buddy_ui(void)
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
-    s_ui.displayed_compression = INT32_MIN;
-    s_ui.displayed_deform_expression = -1;
     s_ui.displayed_scene_minute = INT64_MIN;
     s_ui.displayed_scene_weather_kind = -1;
+    s_ui.displayed_steps = UINT32_MAX;
     lv_timer_create(buddy_update, 66, NULL);
 }
 
@@ -1042,8 +984,6 @@ static void publish_motion(const qmi8658_data_t *data)
 {
     static step_tracker_t step_tracker;
     static float filtered_roll = 0.0f;
-    static float gravity_x = 0.0f;
-    static bool gravity_initialized = false;
     static int64_t last_shake_ms = 0;
 
     const float horizontal = sqrtf(data->accelY * data->accelY + data->accelZ * data->accelZ);
@@ -1063,18 +1003,11 @@ static void publish_motion(const qmi8658_data_t *data)
                                                                  time_ms);
 
     filtered_roll = filtered_roll * 0.82f + measured_roll * 0.18f;
-    if (!gravity_initialized) {
-        gravity_x = data->accelX;
-        gravity_initialized = true;
-    }
-    gravity_x = gravity_x * 0.94f + data->accelX * 0.06f;
-    const float lateral_accel = data->accelX - gravity_x;
 
     portENTER_CRITICAL(&s_motion_lock);
     s_motion.sensor_online = true;
     s_motion.roll_deg = filtered_roll;
     s_motion.movement = s_motion.movement * 0.72f + movement * 0.28f;
-    s_motion.lateral_accel = s_motion.lateral_accel * 0.55f + lateral_accel * 0.45f;
     if (shake && (time_ms - last_shake_ms) > SHAKE_COOLDOWN_MS) {
         ++s_motion.shake_generation;
         last_shake_ms = time_ms;
