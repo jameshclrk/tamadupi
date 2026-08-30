@@ -36,8 +36,8 @@ credentials must stay in `main/secrets.h`, which is ignored by Git.
 The AMOLED shows a small animated character:
 
 - Tilt the board left and right to make Mochi lean and look around.
-- Move the board side to side to slide Mochi around; Mochi squishes on impact with the screen edges.
-- Walking with Tamadupi counts steps and gradually improves Health. The first
+- Walking with Tamadupi counts steps and raises the unified activity score. Mochi
+  dances during a walk and celebrates visible score gains with a flip. The first
   three cadence-consistent impacts confirm a walk, which filters out tilting,
   isolated bumps, and fast shaking.
 - Give the board a gentle shake to trigger Mochi's surprised expression.
@@ -46,7 +46,7 @@ The AMOLED shows a small animated character:
 - The text-free outdoor scene follows the local solar day: bright grass and sky
   during the day, warm dawn and sunset transitions, then moonlight, stars, and
   fireflies at night. Clouds, rain, snow, and storms layer over it.
-- Health and Social survive reboots. Low scores give Mochi tired or lonely
+- Activity and Social survive reboots. Low scores give Mochi tired or lonely
   expressions and hints about what it needs.
 - Leave it still and Mochi breathes and blinks.
 
