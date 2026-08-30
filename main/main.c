@@ -36,6 +36,9 @@
 #define SHAKE_GYRO_THRESHOLD_DPS 170.0f
 #define SHAKE_COOLDOWN_MS 650
 #define CELEBRATION_DURATION_MS 900
+#define UI_ACTIVE_PERIOD_MS 66
+#define UI_IDLE_PERIOD_MS 200
+#define LVGL_TASK_CORE 1
 #define BUDDY_PI 3.14159265358979323846f
 
 #define BUDDY_BODY_X 30
@@ -112,12 +115,14 @@ typedef struct {
     lv_obj_t *scene_stars[9];
     lv_obj_t *scene_fireflies[5];
     lv_obj_t *sparkles[4];
+    lv_timer_t *update_timer;
     uint32_t seen_shake_generation;
     int64_t surprised_until_ms;
     bool status_initialized;
     bool displayed_sensor_online;
     uint32_t displayed_weather_generation;
     int displayed_weather_kind;
+    int displayed_ambience_kind;
     int displayed_expression;
     bool displayed_blink;
     int32_t displayed_gaze_x;
@@ -128,6 +133,9 @@ typedef struct {
     int32_t displayed_score;
     int32_t displayed_multiplier;
     int32_t displayed_nearby_devices;
+    int32_t displayed_activity_highlight;
+    int32_t displayed_score_pip;
+    int16_t displayed_firefly_opa[5];
     int64_t displayed_scene_minute;
     int displayed_scene_weather_kind;
     int64_t celebration_started_ms;
@@ -186,6 +194,10 @@ static void start_celebration(int64_t time_ms)
 {
     s_ui.celebration_started_ms = time_ms;
     s_ui.celebration_until_ms = time_ms + CELEBRATION_DURATION_MS;
+    if (s_ui.update_timer != NULL) {
+        lv_timer_set_period(s_ui.update_timer, UI_ACTIVE_PERIOD_MS);
+        lv_timer_ready(s_ui.update_timer);
+    }
 }
 
 static void tap_event_cb(lv_event_t *event)
@@ -657,8 +669,11 @@ static void update_time_scene(const weather_snapshot_t *weather,
         const float pulse = 0.48f + 0.52f *
                             sinf((float)time_ms * 0.003f + (float)i * 1.7f);
         const float opacity = clampf(palette.fireflies * pulse, 0.0f, 1.0f);
-        lv_obj_set_style_opa(s_ui.scene_fireflies[i], (lv_opa_t)(255.0f * opacity),
-                             LV_PART_MAIN);
+        const lv_opa_t firefly_opa = (lv_opa_t)(255.0f * opacity);
+        if (firefly_opa != s_ui.displayed_firefly_opa[i]) {
+            lv_obj_set_style_opa(s_ui.scene_fireflies[i], firefly_opa, LV_PART_MAIN);
+            s_ui.displayed_firefly_opa[i] = firefly_opa;
+        }
     }
 }
 
@@ -668,12 +683,15 @@ static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
                             kind == WEATHER_KIND_SNOW || kind == WEATHER_KIND_STORM;
     const bool show_particles = kind == WEATHER_KIND_RAIN || kind == WEATHER_KIND_SNOW ||
                                 kind == WEATHER_KIND_STORM;
+    const bool ambience_changed = kind != s_ui.displayed_ambience_kind;
 
-    for (size_t i = 0; i < 3; ++i) {
-        if (show_cloud) {
-            lv_obj_clear_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+    if (ambience_changed) {
+        for (size_t i = 0; i < 3; ++i) {
+            if (show_cloud) {
+                lv_obj_clear_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(s_ui.weather_clouds[i], LV_OBJ_FLAG_HIDDEN);
+            }
         }
     }
 
@@ -687,17 +705,20 @@ static void update_weather_ambience(weather_kind_t kind, int64_t time_ms)
         const int32_t y = 105 + (int32_t)((time_ms / (kind == WEATHER_KIND_SNOW ? 15 : 7) +
                                            (int64_t)i * 47) % 205);
         lv_obj_set_y(particle, y);
-        if (kind == WEATHER_KIND_SNOW) {
-            lv_obj_set_size(particle, 7, 7);
-            lv_obj_set_style_radius(particle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_SNOW), LV_PART_MAIN);
-        } else {
-            lv_obj_set_size(particle, kind == WEATHER_KIND_STORM ? 5 : 4,
-                            kind == WEATHER_KIND_STORM ? 20 : 16);
-            lv_obj_set_style_radius(particle, 2, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
+        if (ambience_changed) {
+            if (kind == WEATHER_KIND_SNOW) {
+                lv_obj_set_size(particle, 7, 7);
+                lv_obj_set_style_radius(particle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+                lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_SNOW), LV_PART_MAIN);
+            } else {
+                lv_obj_set_size(particle, kind == WEATHER_KIND_STORM ? 5 : 4,
+                                kind == WEATHER_KIND_STORM ? 20 : 16);
+                lv_obj_set_style_radius(particle, 2, LV_PART_MAIN);
+                lv_obj_set_style_bg_color(particle, lv_color_hex(COLOR_RAIN), LV_PART_MAIN);
+            }
         }
     }
+    s_ui.displayed_ambience_kind = kind;
 }
 
 static uint32_t buddy_body_color(buddy_expression_t expression, weather_kind_t weather)
@@ -732,6 +753,7 @@ static void buddy_update(lv_timer_t *timer)
             s_ui.displayed_weather_generation = weather.generation;
             s_ui.status_initialized = true;
         }
+        lv_timer_set_period(timer, UI_IDLE_PERIOD_MS);
         return;
     }
 
@@ -768,7 +790,7 @@ static void buddy_update(lv_timer_t *timer)
         (int32_t)(sinf(celebration_progress * BUDDY_PI) * 22.0f +
                   fabsf(celebration_wave) * 7.0f) : 0;
     const int32_t character_x = 69 + dance_x + celebration_x;
-    const int32_t character_y = 83 + breathe - dance_jump - celebration_jump;
+    const int32_t character_y = 83 - dance_jump - celebration_jump;
     const int32_t gaze_x = (int32_t)(roll / 7.0f);
     const buddy_expression_t expression = surprised ? BUDDY_EXPRESSION_SURPRISED :
         (celebrating || needs.walking || score >= 85 ? BUDDY_EXPRESSION_HAPPY :
@@ -783,6 +805,7 @@ static void buddy_update(lv_timer_t *timer)
 
     update_time_scene(&weather, weather_kind, time_ms);
     update_weather_ambience(weather_kind, time_ms);
+    lv_obj_set_y(s_ui.belly_glow, 137 + breathe);
 
     if (character_x != s_ui.displayed_character_x || character_y != s_ui.displayed_character_y) {
         lv_obj_set_pos(s_ui.character, character_x, character_y);
@@ -798,11 +821,14 @@ static void buddy_update(lv_timer_t *timer)
     lv_obj_set_y(s_ui.right_arm, 131 - appendage_bob);
     lv_obj_set_y(s_ui.left_foot, 193 - appendage_bob);
     lv_obj_set_y(s_ui.right_foot, 193 + appendage_bob);
-    const size_t bright_pip = (size_t)((time_ms / 140) % 4);
-    for (size_t i = 0; i < 4; ++i) {
-        lv_obj_set_style_opa(s_ui.score_pips[i],
-                             needs.walking && i == bright_pip ? LV_OPA_COVER : LV_OPA_30,
-                             LV_PART_MAIN);
+    const int32_t bright_pip = needs.walking ? (int32_t)((time_ms / 140) % 4) : -1;
+    if (bright_pip != s_ui.displayed_score_pip) {
+        for (size_t i = 0; i < 4; ++i) {
+            lv_obj_set_style_opa(s_ui.score_pips[i],
+                                 bright_pip == (int32_t)i ? LV_OPA_COVER : LV_OPA_30,
+                                 LV_PART_MAIN);
+        }
+        s_ui.displayed_score_pip = bright_pip;
     }
 
     if (blink != s_ui.displayed_blink || gaze_x != s_ui.displayed_gaze_x ||
@@ -867,9 +893,13 @@ static void buddy_update(lv_timer_t *timer)
         lv_label_set_text(s_ui.score_label, score_text);
         s_ui.displayed_score = score;
     }
-    lv_obj_set_style_bg_color(s_ui.score_bar,
-                              lv_color_hex(needs.walking || celebrating ? COLOR_STAR : COLOR_MINT),
-                              LV_PART_MAIN);
+    const bool activity_highlight = needs.walking || celebrating;
+    if ((int32_t)activity_highlight != s_ui.displayed_activity_highlight) {
+        lv_obj_set_style_bg_color(s_ui.score_bar,
+                                  lv_color_hex(activity_highlight ? COLOR_STAR : COLOR_MINT),
+                                  LV_PART_MAIN);
+        s_ui.displayed_activity_highlight = activity_highlight;
+    }
     if (needs.social_multiplier != s_ui.displayed_multiplier) {
         const char *text = needs.social_multiplier >= 3 ? "3x" :
                            (needs.social_multiplier == 2 ? "2x" : "1x");
@@ -907,6 +937,12 @@ static void buddy_update(lv_timer_t *timer)
         s_ui.displayed_weather_generation = weather.generation;
         s_ui.status_initialized = true;
     }
+
+    const bool precipitation = weather_kind == WEATHER_KIND_RAIN ||
+                               weather_kind == WEATHER_KIND_SNOW ||
+                               weather_kind == WEATHER_KIND_STORM;
+    lv_timer_set_period(timer, needs.walking || celebrating || precipitation ?
+                        UI_ACTIVE_PERIOD_MS : UI_IDLE_PERIOD_MS);
 }
 
 static void create_buddy_ui(void)
@@ -933,8 +969,14 @@ static void create_buddy_ui(void)
     s_ui.displayed_nearby_devices = INT32_MIN;
     s_ui.displayed_weather_generation = UINT32_MAX;
     s_ui.displayed_weather_kind = -1;
+    s_ui.displayed_ambience_kind = -1;
     s_ui.displayed_scene_minute = INT64_MIN;
     s_ui.displayed_scene_weather_kind = -1;
+    s_ui.displayed_activity_highlight = -1;
+    s_ui.displayed_score_pip = INT32_MIN;
+    for (size_t i = 0; i < 5; ++i) {
+        s_ui.displayed_firefly_opa[i] = -1;
+    }
 
     for (lv_indev_t *indev = lv_indev_get_next(NULL); indev != NULL;
          indev = lv_indev_get_next(indev)) {
@@ -942,7 +984,7 @@ static void create_buddy_ui(void)
             lv_indev_add_event_cb(indev, tap_event_cb, LV_EVENT_CLICKED, NULL);
         }
     }
-    lv_timer_create(buddy_update, 66, NULL);
+    s_ui.update_timer = lv_timer_create(buddy_update, UI_IDLE_PERIOD_MS, NULL);
 }
 
 static esp_err_t detect_imu_address(i2c_master_bus_handle_t bus, uint8_t *address)
@@ -1078,7 +1120,17 @@ void app_main(void)
         ESP_LOGE(TAG, "BLE social sensing failed: %s", esp_err_to_name(ret));
     }
 
-    lv_display_t *display = bsp_display_start();
+    bsp_display_cfg_t display_config = {
+        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+        .buffer_size = BSP_LCD_DRAW_BUFF_SIZE,
+        .double_buffer = BSP_LCD_DRAW_BUFF_DOUBLE,
+        .flags = {
+            .buff_dma = false,
+            .buff_spiram = true,
+        },
+    };
+    display_config.lvgl_port_cfg.task_affinity = LVGL_TASK_CORE;
+    lv_display_t *display = bsp_display_start_with_config(&display_config);
     if (display == NULL) {
         ESP_LOGE(TAG, "Display initialization failed");
         return;
